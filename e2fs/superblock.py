@@ -20,7 +20,7 @@ class Superblock(Struct):
             0x40:'COMPAT_LAZY_BG "Lazy BG". Not in Linux kernel, seems to have been for uninitialized block groups?',
             0x80:'COMPAT_EXCLUDE_INODE "Exclude inode". Intended for filesystem snapshot feature, but not used.',
             0x100:'COMPAT_EXCLUDE_BITMAP "Exclude bitmap". Seems to be used to indicate the presence of snapshot-related exclude bitmaps? Not defined in kernel or used in e2fsprogs.',
-            0x200:'COMPAT_SPARSE_SUPER2 Sparse Super Block, v2. If this flag is set, the SB field s_backup_bgs points to the two block groups that contain backup superblocks.',
+            0x200:'COMPAT_SPARSE_SUPER2 Sparse Super Block, v2. If this flag is set, the SB field backup_bgs points to the two block groups that contain backup superblocks.',
         },
         'feature_incompat':{
             0x1:'INCOMPAT_COMPRESSION Compression. Not implemented.',
@@ -99,10 +99,10 @@ class Superblock(Struct):
         'I free_blocks_count_lo Free block count.',
         'I free_inodes_count Free inode count.',
         'I first_data_block First data block. This must be at least 1 for 1k-block filesystems and is typically 0 for all other block sizes.',
-        'I log_block_size Block size is 2 ^ (10 + s_log_block_size).',
-        'I log_cluster_size Cluster size is (2 ^ s_log_cluster_size) blocks if bigalloc is enabled. Otherwise s_log_cluster_size must equal s_log_block_size.',
+        'I log_block_size Block size is 2 ^ (10 + log_block_size).',
+        'I log_cluster_size Cluster size is (2 ^ log_cluster_size) blocks if bigalloc is enabled. Otherwise log_cluster_size must equal log_block_size.',
         'I blocks_per_group Blocks per group.',
-        'I clusters_per_group Clusters per group, if bigalloc is enabled. Otherwise s_clusters_per_group must equal s_blocks_per_group.',
+        'I clusters_per_group Clusters per group, if bigalloc is enabled. Otherwise clusters_per_group must equal blocks_per_group.',
         'I inodes_per_group Inodes per group.',
         'I mtime Mount time, in seconds since the epoch.',
         'I wtime Write time, in seconds since the epoch.',
@@ -137,7 +137,7 @@ class Superblock(Struct):
         'I last_orphan Start of list of orphaned inodes to delete.',
         '4I hash_seed HTREE hash seed.',
         'B def_hash_version Default hash algorithm to use for directory hashes.',
-        'B jnl_backup_type If this value is 0 or EXT3_JNL_BACKUP_BLOCKS (1), then the s_jnl_blocks field contains a duplicate copy of the inode\'s i_block[] array and i_size.',
+        'B jnl_backup_type If this value is 0 or EXT3_JNL_BACKUP_BLOCKS (1), then the jnl_blocks field contains a duplicate copy of the inode\'s i_block[] array and i_size.',
         'H desc_size Size of group descriptors, in bytes, if the 64bit incompat feature flag is set.',
         'I default_mount_opts Default mount options.',
         'I first_meta_bg First metablock block group, if the meta_bg feature is enabled.',
@@ -153,7 +153,7 @@ class Superblock(Struct):
         'H mmp_interval # seconds to wait in multi-mount prevention (MMP) checking. In theory, MMP is a mechanism to record in the superblock which host and device have mounted the filesystem, in order to prevent multiple mounts. This feature does not seem to be implemented...',
         'Q mmp_block Block # for multi-mount protection data.',
         'I raid_stripe_width RAID stripe width. This is the number of logical blocks read from or written to the disk before coming back to the current disk. This is used by the block allocator to try to reduce the number of read-modify-write operations in a RAID5/6.',
-        'B log_groups_per_flex Size of a flexible block group is 2 ^ s_log_groups_per_flex.',
+        'B log_groups_per_flex Size of a flexible block group is 2 ^ log_groups_per_flex.',
         'B checksum_type Metadata checksum algorithm type. The only valid value is 1 (crc32c).',
         'H reserved_pad reserved_pad', 
         'Q kbytes_written Number of KiB written to this filesystem over its lifetime.',
@@ -166,7 +166,7 @@ class Superblock(Struct):
         'I first_error_ino inode involved in first error.',
         'Q first_error_block Number of block involved of first error.',
         '32s first_error_func Name of function where the error happened.',
-        'I s_first_error_line Line number where error happened.',
+        'I first_error_line Line number where error happened.',
         'I last_error_time Time of most recent error, in seconds since the epoch.',
         'I last_error_ino inode involved in most recent error.',
         'I last_error_line Line number where most recent error happened.',
@@ -219,11 +219,32 @@ class Superblock(Struct):
         return self._timestamp(k) if self[k] else 'Never'
 
 
-    def backup_blocks(self):
-        block = self.offset // self.block_size
-        if self.feature_ro_compat & Superblock.RO_COMPAT_SPARSE_SUPER:
-            # power of 3, 5, or 7.
-            pass
+    def pretty_first_error_time(self, k):
+        return self._timestamp(k) if self[k] else 'Never'
+
+
+    def pretty_last_error_time(self, k):
+        return self._timestamp(k) if self[k] else 'Never'
+        
+
+    def backups(self):
+        for blk_grp in range(0, self.blocks_count_lo//self.blocks_per_group + 1):
+            if blk_grp == 0: continue
+            sb = Superblock(self.stream, blk_grp*self.blocks_per_group*self.block_size_in_bytes)
+            sb.validate()
+            if sb._errors and sb._errors[0] == "Bad magic": continue
+            yield blk_grp, sb
+
+
+    def summary(self, print):
+        print(f"{self.name!r} {self.block_size_in_bytes//1024}k/{self.blocks_count_lo*self.block_size_in_bytes//1024//1024}Mb  {self.blocks_count_lo/self.blocks_per_group}grps")
+        print(' '.join(self.pretty_val('flags') + self.pretty_val('feature_compat') + self.pretty_val('feature_incompat') + self.pretty_val('feature_ro_compat')))
+
+
+    @property
+    def name(self):
+        name = self.volume_name
+        return name[:name.index(0)].decode('ascii')
 
 
     @property
@@ -239,5 +260,5 @@ class Superblock(Struct):
     @property
     def frag_size(self):
         return 2**(10+self.log_cluster_size)
-
+        
     

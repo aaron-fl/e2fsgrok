@@ -90,7 +90,7 @@ class Struct(metaclass=MetaStruct):
             pass
         val = self[k]
         if k in self._enums:
-            return tuple([self._enums[k][v] for v in val]) if isinstance(val, tuple) else self._enums[k][val]
+            return tuple([self._enums[k].get(v,'?') for v in val]) if isinstance(val, tuple) else self._enums[k].get(val,'?')
         if k in self._flags:
             return [name for flg, name in self._flags[k].items() if flg&val]
         return val
@@ -107,3 +107,15 @@ class Struct(metaclass=MetaStruct):
         if self._errors:
             print.card('Errors\t', *[f'* {e}\n' for e in self._errors])
 
+
+    def diff(self, print, other):
+        tbl = Table(1,1,1,1)
+        for fld in self.flds:
+            if self[fld] == other[fld]: continue
+            val = str(self[fld])
+            pval = str(self.pretty_val(fld))
+            if pval == val: val = ''
+            tbl(fld, '\t', val[:40], '\t', pval[:40],'\t', self.doc[fld].replace('\t', ' ')[:40],'\t')
+        print(tbl)
+        if self._errors:
+            print.card('Errors\t', *[f'* {e}\n' for e in self._errors])

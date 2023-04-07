@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import os, sys
 from subprocess import call, Popen, PIPE, DEVNULL
 from os.path import join, abspath, split, exists
