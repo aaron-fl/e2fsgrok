@@ -2,16 +2,27 @@ import io, struct, functools
 from print_ext import Table, PrettyException
 
 
+def read(stream, offset, size):
+    try:
+        stream.seek(offset)
+    except OSError:
+        raise PrettyException(msg=f'EOF {pretty_num(offset)} / {pretty_num(stream.seek(0,io.SEEK_END))}')
+    data = stream.read(size)
+    if len(data) != size:
+        raise PrettyException(msg=f"need {size}bytes, got {len(data)}")
+    return data
+
+
 def pretty_num(n):
     s = []
     factor = 1024*1024*1024*1024*1024
     for unit in 'PTGMk':
         if f := n // factor:
-            s.append(f'{f}{unit}')
+            s.append(f'{f}\bdem {unit}\b ')
             n -= f*factor
         factor //= 1024
     if not s or n: s.append(str(n))
-    return ','.join(s)
+    return ''.join(s)
 
 
 
@@ -77,6 +88,10 @@ class Struct(metaclass=MetaStruct):
         return self._errors
 
 
+    def raw(self):
+        return read(self.stream, self.offset, self.size)
+
+
     def __getitem__(self, key):
         try:
             return self.__cache[key]
@@ -85,13 +100,7 @@ class Struct(metaclass=MetaStruct):
         if key not in self.flds:
             raise AttributeError(f"{key} is not a field")
         offset, size, format = self.flds[key]
-        try:
-            self.stream.seek(offset+self.offset)
-        except OSError:
-            raise PrettyException(msg=f'EOF {pretty_num(offset+self.offset)} / {pretty_num(self.stream.seek(0,io.SEEK_END))}')
-        data = self.stream.read(size)
-        if len(data) != size:
-            raise PrettyException(msg=f"{key} needs {size}bytes, got {len(data)}")
+        data = read(self.stream, offset + self.offset, size)
         self.__cache[key] = struct.unpack_from(format, data)
         if len(self.__cache[key]) == 1: self.__cache[key] = self.__cache[key][0]
         return self.__cache[key]
@@ -110,30 +119,30 @@ class Struct(metaclass=MetaStruct):
         if k in self._enums:
             return tuple([self._enums[k].get(v,'?') for v in val]) if isinstance(val, tuple) else self._enums[k].get(val,'?')
         if k in self._flags:
-            return [name for flg, name in self._flags[k].items() if flg&val]
+            return ' '.join([name for flg, name in self._flags[k].items() if flg&val])
         return val
 
 
     def __pretty__(self, print, **kwargs):
-        tbl = Table(1,1,1,1)
+        tbl = Table(1,1,1)
         for fld in self.flds:
             val = str(self[fld])
             pval = str(self.pretty_val(fld))
             if pval == val: val = ''
-            tbl(fld, '\t', val[:40], '\t', pval[:40],'\t', self.doc[fld].replace('\t', ' ')[:40],'\t')
+            tbl(fld, '\t', val[:40], '\t', pval[:100],'\t')#, self.doc[fld].replace('\t', ' ')[:40],'\t')
         print(tbl)
         if self._errors:
             print.card('Errors\t', *[f'* {e}\n' for e in self._errors])
 
 
     def diff(self, print, other):
-        tbl = Table(1,1,1,1)
+        tbl = Table(1,1,1)
         for fld in self.flds:
             if self[fld] == other[fld]: continue
             val = str(self[fld])
             pval = str(self.pretty_val(fld))
             if pval == val: val = ''
-            tbl(fld, '\t', val[:40], '\t', pval[:40],'\t', self.doc[fld].replace('\t', ' ')[:40],'\t')
+            tbl(fld, '\t', val[:40], '\t', pval[:100],'\t')#, self.doc[fld].replace('\t', ' ')[:40],'\t')
         print(tbl)
         if self._errors:
             print.card('Errors\t', *[f'* {e}\n' for e in self._errors])

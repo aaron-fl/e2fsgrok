@@ -1,8 +1,9 @@
-from math import ceil
+from math import ceil, log
 from print_ext import PrettyException
 from datetime import datetime
-from .struct import Struct
+from .struct import Struct, pretty_num
 from .block_descriptor import BlockDescriptor32, BlockDescriptor64
+from .bitmap import Bitmap
 
 
 class Superblock(Struct):
@@ -197,8 +198,8 @@ class Superblock(Struct):
             self._errors.append(f"Bad magic")
             if not all: return self._errors
         if super().validate(all=all) and not all: return self._errors
-        if self.blocks_per_group != 8*self.block_size_in_bytes:
-            self._errors.append(f'block group size mismatch: {self.blocks_per_group} != {8*self.block_size_in_bytes}')
+        if self.blocks_per_group != 8*self.block_size:
+            self._errors.append(f'block group size mismatch: {self.blocks_per_group} != {8*self.block_size}')
             if not all: return self._errors
         return self._errors
 
@@ -231,22 +232,31 @@ class Superblock(Struct):
         return self._timestamp(k) if self[k] else 'Never'
         
 
-    def backups(self):
-        for blk_grp in range(0, self.blocks_count_lo//self.blocks_per_group + 1):
-            if blk_grp == 0: continue
-            sb = Superblock(self.stream, blk_grp*self.blocks_per_group*self.block_size_in_bytes)
+    def all(self, brute=False):
+        if not self.feature_ro_compat & self.RO_COMPAT_SPARSE_SUPER: brute = True
+        is_pow = lambda n, base: int(x:=log(n, base)) == x
+        is_super = lambda n: n==0 or is_pow(n,3) or is_pow(n,5) or is_pow(n,7)
+        for bg in range(0, self.bg_count):
+            if not (brute or is_super(bg)): continue
+            sb = Superblock(self.stream, bg*self.bg_size + (0 if bg else 1024))
             sb.validate()
             if sb._errors and sb._errors[0] == "Bad magic": continue
-            yield blk_grp, sb
+            sb.validate(all=True)
+            yield bg, sb
 
 
     def summary(self, print):
-        print(f"{self.name!r} {self.block_size_in_bytes//1024}k/{self.blocks_count_lo*self.block_size_in_bytes//1024//1024}Mb  {self.num_block_groups}grps")
-        print(' '.join(self.pretty_val('flags') + self.pretty_val('feature_compat') + self.pretty_val('feature_incompat') + self.pretty_val('feature_ro_compat')))
+        print(f"{self.name!r} {self.block_size//1024}k/{pretty_num(self.blocks_count_lo*self.block_size)}  {self.bg_count}grps")
+        print(self.pretty_val('flags'), ' ', self.pretty_val('feature_compat'), ' ', self.pretty_val('feature_incompat'),' ', self.pretty_val('feature_ro_compat'))
 
 
     @property
-    def num_block_groups(self):
+    def bg_desc_blocks_count(self):
+        return ceil(self.bg_count * self.BlockDescriptor.size / self.block_size)
+
+
+    @property
+    def bg_count(self):
         return ceil(self.blocks_count_lo/self.blocks_per_group)
 
 
@@ -257,13 +267,13 @@ class Superblock(Struct):
 
 
     @property
-    def block_size_in_bytes(self):
+    def block_size(self):
         return 2**(10+self.log_block_size)
 
 
     @property
-    def block_group_size_in_bytes(self):
-        return self.blocks_per_group*self.block_size_in_bytes
+    def bg_size(self):
+        return self.blocks_per_group*self.block_size
 
 
     @property
@@ -274,13 +284,49 @@ class Superblock(Struct):
     @property
     def frag_size(self):
         return 2**(10+self.log_cluster_size)
-        
+
+
+    @property
+    def BlockDescriptor(self):
+        return BlockDescriptor64 if self.desc_size > 32 else BlockDescriptor32
     
+
     def block_descriptors(self, bg):
-        sb = Superblock(self.stream, bg * self.block_group_size_in_bytes + (0 if bg else 1024))
-        if sb.validate():
+        if not self.on_bg(bg):
             raise PrettyException(msg=f"no superblock at bg#{bg}")
-        BlockDescriptor = BlockDescriptor64 if self.desc_size > 32 else BlockDescriptor32
-        for i in range(self.num_block_groups):
-            yield BlockDescriptor(self.stream, bg * self.block_group_size_in_bytes + self.block_size_in_bytes + BlockDescriptor.size, bd=i)
+        for i in range(self.bg_count):
+            yield self.BlockDescriptor(self.stream, bg * self.bg_size + self.block_size + i*self.BlockDescriptor.size, bg=i, bg_src=bg)
         
+
+    def all_block_descriptors(self):
+        all_bg = {}
+        for bg, _ in self.all():
+            for bg in self.block_descriptors(bg):
+                bg.copies = 1
+                h = hash(bg.raw())
+                if h in all_bg: all_bg[h].copies += 1
+                else: all_bg[h] = bg
+        return all_bg 
+
+    
+    def on_bg(self, bg):
+        sb = Superblock(self.stream, bg * self.bg_size + (0 if bg else 1024))
+        return None if sb.validate() else sb
+    
+
+    def bitmap_offset(self, bg):
+        if self.on_bg(bg):
+            return 1 + self.bg_desc_blocks_count + self.reserved_gdt_blocks
+        return 0
+
+    def bitmaps(self, bg):
+        off = self.bitmap_offset(bg)
+        #print(f" #{bg} offset {off} {bg*self.blocks_per_group + off}")
+        data = Bitmap(self.stream, bg*self.bg_size + off*self.block_size, self.block_size)
+        inode = Bitmap(self.stream, bg*self.bg_size + (off+1)*self.block_size, self.block_size)
+        return data, inode
+
+
+    #def all_free(self):
+    #    for bg in range(self.bg_count):
+            

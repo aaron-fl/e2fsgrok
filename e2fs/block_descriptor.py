@@ -31,8 +31,6 @@ class BlockDescriptor32(Struct):
     flags = flags
     enums = {}
 
-    def __str__(self):
-        return f"#{self.bd}  {self.block_bitmap_lo}/{self.inode_bitmap_lo}/{self.inode_table_lo}   {self.free_blocks_count_lo}/{self.free_inodes_count_lo}"
 
 
 
