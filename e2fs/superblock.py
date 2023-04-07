@@ -1,5 +1,9 @@
-from .struct import Struct
+from math import ceil
+from print_ext import PrettyException
 from datetime import datetime
+from .struct import Struct
+from .block_descriptor import BlockDescriptor32, BlockDescriptor64
+
 
 class Superblock(Struct):
     size = 1024
@@ -93,98 +97,98 @@ class Superblock(Struct):
 
 
     dfn = [
-        'I inodes_count Total inode count.',
-        'I blocks_count_lo Total block count.',
-        'I r_blocks_count_lo This number of blocks can only be allocated by the super-user.',
-        'I free_blocks_count_lo Free block count.',
-        'I free_inodes_count Free inode count.',
-        'I first_data_block First data block. This must be at least 1 for 1k-block filesystems and is typically 0 for all other block sizes.',
-        'I log_block_size Block size is 2 ^ (10 + log_block_size).',
-        'I log_cluster_size Cluster size is (2 ^ log_cluster_size) blocks if bigalloc is enabled. Otherwise log_cluster_size must equal log_block_size.',
-        'I blocks_per_group Blocks per group.',
-        'I clusters_per_group Clusters per group, if bigalloc is enabled. Otherwise clusters_per_group must equal blocks_per_group.',
-        'I inodes_per_group Inodes per group.',
-        'I mtime Mount time, in seconds since the epoch.',
-        'I wtime Write time, in seconds since the epoch.',
-        'H mnt_count Number of mounts since the last fsck.',
-        'H max_mnt_count Number of mounts beyond which a fsck is needed.',
-        'H magic Magic signature, 0xEF53',
-        'H state File system state. ',
-        'H errors Behaviour when detecting errors.',
-        'H minor_rev_level Minor revision level.',
-        'I lastcheck Time of last check, in seconds since the epoch.',
-        'I checkinterval Maximum time between checks, in seconds.',
-        'I creator_os OS.',
-        'I rev_level Revision level.',
-        'H def_resuid Default uid for reserved blocks.',
-        'H def_resgid Default gid for reserved blocks.',
-        'I first_ino First non-reserved inode.',
-        'H inode_size Size of inode structure, in bytes.',
-        'H block_group_nr Block group # of this superblock.',
-        'I feature_compat Compatible feature set flags. Kernel can still read/write this fs even if it doesn\'t understand a flag; e2fsck will not attempt to fix a filesystem with any unknown COMPAT flags.',
-        'I feature_incompat Incompatible feature set. If the kernel or e2fsck doesn\'t understand one of these bits, it will refuse to mount or attempt to repair the filesystem.',
-        'I feature_ro_compat Readonly-compatible feature set. If the kernel doesn\'t understand one of these bits, it can still mount read-only, but e2fsck will refuse to modify the filesystem.',
+        '<I inodes_count Total inode count.',
+        '<I blocks_count_lo Total block count.',
+        '<I r_blocks_count_lo This number of blocks can only be allocated by the super-user.',
+        '<I free_blocks_count_lo Free block count.',
+        '<I free_inodes_count Free inode count.',
+        '<I first_data_block First data block. This must be at least 1 for 1k-block filesystems and is typically 0 for all other block sizes.',
+        '<I log_block_size Block size is 2 ^ (10 + log_block_size).',
+        '<I log_cluster_size Cluster size is (2 ^ log_cluster_size) blocks if bigalloc is enabled. Otherwise log_cluster_size must equal log_block_size.',
+        '<I blocks_per_group Blocks per group.',
+        '<I clusters_per_group Clusters per group, if bigalloc is enabled. Otherwise clusters_per_group must equal blocks_per_group.',
+        '<I inodes_per_group Inodes per group.',
+        '<I mtime Mount time, in seconds since the epoch.',
+        '<I wtime Write time, in seconds since the epoch.',
+        '<H mnt_count Number of mounts since the last fsck.',
+        '<H max_mnt_count Number of mounts beyond which a fsck is needed.',
+        '<H magic Magic signature, 0xEF53',
+        '<H state File system state. ',
+        '<H errors Behaviour when detecting errors.',
+        '<H minor_rev_level Minor revision level.',
+        '<I lastcheck Time of last check, in seconds since the epoch.',
+        '<I checkinterval Maximum time between checks, in seconds.',
+        '<I creator_os OS.',
+        '<I rev_level Revision level.',
+        '<H def_resuid Default uid for reserved blocks.',
+        '<H def_resgid Default gid for reserved blocks.',
+        '<I first_ino First non-reserved inode.',
+        '<H inode_size Size of inode structure, in bytes.',
+        '<H block_group_nr Block group # of this superblock.',
+        '<I feature_compat Compatible feature set flags. Kernel can still read/write this fs even if it doesn\'t understand a flag; e2fsck will not attempt to fix a filesystem with any unknown COMPAT flags.',
+        '<I feature_incompat Incompatible feature set. If the kernel or e2fsck doesn\'t understand one of these bits, it will refuse to mount or attempt to repair the filesystem.',
+        '<I feature_ro_compat Readonly-compatible feature set. If the kernel doesn\'t understand one of these bits, it can still mount read-only, but e2fsck will refuse to modify the filesystem.',
         '16s uuid 128-bit UUID for volume.',
         '16s volume_name Volume label.',
         '64s last_mounted Directory where filesystem was last mounted.',
-        'I algorithm_usage_bitmap For compression (Not used in e2fsprogs/Linux)',
+        '<I algorithm_usage_bitmap For compression (Not used in e2fsprogs/Linux)',
         'B prealloc_blocks # of blocks to try to preallocate for ... files? (Not used in e2fsprogs/Linux)',
         'B prealloc_dir_blocks # of blocks to preallocate for directories. (Not used in e2fsprogs/Linux)',
-        'H reserved_gdt_blocks Number of reserved GDT entries for future filesystem expansion.',
+        '<H reserved_gdt_blocks Number of reserved GDT entries for future filesystem expansion.',
         '16s journal_uuid UUID of journal superblock',
-        'I journal_inum inode number of journal file.',
-        'I journal_dev Device number of journal file, if the external journal feature flag is set.',
-        'I last_orphan Start of list of orphaned inodes to delete.',
-        '4I hash_seed HTREE hash seed.',
+        '<I journal_inum inode number of journal file.',
+        '<I journal_dev Device number of journal file, if the external journal feature flag is set.',
+        '<I last_orphan Start of list of orphaned inodes to delete.',
+        '<4I hash_seed HTREE hash seed.',
         'B def_hash_version Default hash algorithm to use for directory hashes.',
         'B jnl_backup_type If this value is 0 or EXT3_JNL_BACKUP_BLOCKS (1), then the jnl_blocks field contains a duplicate copy of the inode\'s i_block[] array and i_size.',
-        'H desc_size Size of group descriptors, in bytes, if the 64bit incompat feature flag is set.',
-        'I default_mount_opts Default mount options.',
-        'I first_meta_bg First metablock block group, if the meta_bg feature is enabled.',
-        'I mkfs_time When the filesystem was created, in seconds since the epoch.',
-        '17I jnl_blocks Backup copy of the journal inode\'s i_block[] array in the first 15 elements and i_size_high and i_size in the 16th and 17th elements, respectively.',
-        'I blocks_count_hi High 32-bits of the block count.',
-        'I r_blocks_count_hi High 32-bits of the reserved block count.',
-        'I free_blocks_count_hi High 32-bits of the free block count.',
-        'H min_extra_isize All inodes have at least # bytes.',
-        'H want_extra_isize New inodes should reserve # bytes.',
-        'I flags Miscellaneous flags.',
-        'H raid_stride RAID stride. This is the number of logical blocks read from or written to the disk before moving to the next disk. This affects the placement of filesystem metadata, which will hopefully make RAID storage faster.',
-        'H mmp_interval # seconds to wait in multi-mount prevention (MMP) checking. In theory, MMP is a mechanism to record in the superblock which host and device have mounted the filesystem, in order to prevent multiple mounts. This feature does not seem to be implemented...',
-        'Q mmp_block Block # for multi-mount protection data.',
-        'I raid_stripe_width RAID stripe width. This is the number of logical blocks read from or written to the disk before coming back to the current disk. This is used by the block allocator to try to reduce the number of read-modify-write operations in a RAID5/6.',
+        '<H desc_size Size of group descriptors, in bytes, if the 64bit incompat feature flag is set.',
+        '<I default_mount_opts Default mount options.',
+        '<I first_meta_bg First metablock block group, if the meta_bg feature is enabled.',
+        '<I mkfs_time When the filesystem was created, in seconds since the epoch.',
+        '<17I jnl_blocks Backup copy of the journal inode\'s i_block[] array in the first 15 elements and i_size_high and i_size in the 16th and 17th elements, respectively.',
+        '<I blocks_count_hi High 32-bits of the block count.',
+        '<I r_blocks_count_hi High 32-bits of the reserved block count.',
+        '<I free_blocks_count_hi High 32-bits of the free block count.',
+        '<H min_extra_isize All inodes have at least # bytes.',
+        '<H want_extra_isize New inodes should reserve # bytes.',
+        '<I flags Miscellaneous flags.',
+        '<H raid_stride RAID stride. This is the number of logical blocks read from or written to the disk before moving to the next disk. This affects the placement of filesystem metadata, which will hopefully make RAID storage faster.',
+        '<H mmp_interval # seconds to wait in multi-mount prevention (MMP) checking. In theory, MMP is a mechanism to record in the superblock which host and device have mounted the filesystem, in order to prevent multiple mounts. This feature does not seem to be implemented...',
+        '<Q mmp_block Block # for multi-mount protection data.',
+        '<I raid_stripe_width RAID stripe width. This is the number of logical blocks read from or written to the disk before coming back to the current disk. This is used by the block allocator to try to reduce the number of read-modify-write operations in a RAID5/6.',
         'B log_groups_per_flex Size of a flexible block group is 2 ^ log_groups_per_flex.',
         'B checksum_type Metadata checksum algorithm type. The only valid value is 1 (crc32c).',
-        'H reserved_pad reserved_pad', 
-        'Q kbytes_written Number of KiB written to this filesystem over its lifetime.',
-        'I snapshot_inum inode number of active snapshot. (Not used in e2fsprogs/Linux.)',
-        'I snapshot_id Sequential ID of active snapshot. (Not used in e2fsprogs/Linux.)',
-        'Q snapshot_r_blocks_count Number of blocks reserved for active snapshot\'s future use. (Not used in e2fsprogs/Linux.)',
-        'I snapshot_list inode number of the head of the on-disk snapshot list. (Not used in e2fsprogs/Linux.)',
-        'I error_count Number of errors seen.',
-        'I first_error_time First time an error happened, in seconds since the epoch.',
-        'I first_error_ino inode involved in first error.',
-        'Q first_error_block Number of block involved of first error.',
+        '<H reserved_pad reserved_pad', 
+        '<Q kbytes_written Number of KiB written to this filesystem over its lifetime.',
+        '<I snapshot_inum inode number of active snapshot. (Not used in e2fsprogs/Linux.)',
+        '<I snapshot_id Sequential ID of active snapshot. (Not used in e2fsprogs/Linux.)',
+        '<Q snapshot_r_blocks_count Number of blocks reserved for active snapshot\'s future use. (Not used in e2fsprogs/Linux.)',
+        '<I snapshot_list inode number of the head of the on-disk snapshot list. (Not used in e2fsprogs/Linux.)',
+        '<I error_count Number of errors seen.',
+        '<I first_error_time First time an error happened, in seconds since the epoch.',
+        '<I first_error_ino inode involved in first error.',
+        '<Q first_error_block Number of block involved of first error.',
         '32s first_error_func Name of function where the error happened.',
-        'I first_error_line Line number where error happened.',
-        'I last_error_time Time of most recent error, in seconds since the epoch.',
-        'I last_error_ino inode involved in most recent error.',
-        'I last_error_line Line number where most recent error happened.',
-        'Q last_error_block Number of block involved in most recent error.',
+        '<I first_error_line Line number where error happened.',
+        '<I last_error_time Time of most recent error, in seconds since the epoch.',
+        '<I last_error_ino inode involved in most recent error.',
+        '<I last_error_line Line number where most recent error happened.',
+        '<Q last_error_block Number of block involved in most recent error.',
         '32s last_error_func Name of function where the most recent error happened.',
         '64s mount_opts ASCIIZ string of mount options.',
-        'I usr_quota_inum Inode number of user quota file.',
-        'I grp_quota_inum Inode number of group quota file.',
-        'I overhead_blocks Overhead blocks/clusters in fs. (Huh? This field is always zero, which means that the kernel calculates it dynamically.)',
-        'I backup_bgs0 Block groups containing superblock backups (if sparse_super2)',
-        'I backup_bgs1 Block groups containing superblock backups (if sparse_super2)',
+        '<I usr_quota_inum Inode number of user quota file.',
+        '<I grp_quota_inum Inode number of group quota file.',
+        '<I overhead_blocks Overhead blocks/clusters in fs. (Huh? This field is always zero, which means that the kernel calculates it dynamically.)',
+        '<I backup_bgs0 Block groups containing superblock backups (if sparse_super2)',
+        '<I backup_bgs1 Block groups containing superblock backups (if sparse_super2)',
         '4B encrypt_algos Encryption algorithms in use. There can be up to four algorithms in use at any time.',
         '16s encrypt_pw_salt Salt for the string2key algorithm for encryption.',
-        'I lpf_ino Inode number of lost+found',
-        'I prj_quota_inum Inode that tracks project quotas.',
-        'I checksum_seed Checksum seed used for metadata_csum calculations. This value is crc32c(~0, $orig_fs_uuid).',
+        '<I lpf_ino Inode number of lost+found',
+        '<I prj_quota_inum Inode that tracks project quotas.',
+        '<I checksum_seed Checksum seed used for metadata_csum calculations. This value is crc32c(~0, $orig_fs_uuid).',
         '392s end_of_block Padding to the end of the block.',
-        'I checksum Superblock checksum.',
+        '<I checksum Superblock checksum.',
     ]
 
 
@@ -237,8 +241,13 @@ class Superblock(Struct):
 
 
     def summary(self, print):
-        print(f"{self.name!r} {self.block_size_in_bytes//1024}k/{self.blocks_count_lo*self.block_size_in_bytes//1024//1024}Mb  {self.blocks_count_lo/self.blocks_per_group}grps")
+        print(f"{self.name!r} {self.block_size_in_bytes//1024}k/{self.blocks_count_lo*self.block_size_in_bytes//1024//1024}Mb  {self.num_block_groups}grps")
         print(' '.join(self.pretty_val('flags') + self.pretty_val('feature_compat') + self.pretty_val('feature_incompat') + self.pretty_val('feature_ro_compat')))
+
+
+    @property
+    def num_block_groups(self):
+        return ceil(self.blocks_count_lo/self.blocks_per_group)
 
 
     @property
@@ -253,6 +262,11 @@ class Superblock(Struct):
 
 
     @property
+    def block_group_size_in_bytes(self):
+        return self.blocks_per_group*self.block_size_in_bytes
+
+
+    @property
     def cluster_size(self):
         return 2**(10+self.log_cluster_size)
 
@@ -262,3 +276,11 @@ class Superblock(Struct):
         return 2**(10+self.log_cluster_size)
         
     
+    def block_descriptors(self, bg):
+        sb = Superblock(self.stream, bg * self.block_group_size_in_bytes + (0 if bg else 1024))
+        if sb.validate():
+            raise PrettyException(msg=f"no superblock at bg#{bg}")
+        BlockDescriptor = BlockDescriptor64 if self.desc_size > 32 else BlockDescriptor32
+        for i in range(self.num_block_groups):
+            yield BlockDescriptor(self.stream, bg * self.block_group_size_in_bytes + self.block_size_in_bytes + BlockDescriptor.size, bd=i)
+        

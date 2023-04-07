@@ -1,5 +1,18 @@
-import struct, functools
-from print_ext import Table
+import io, struct, functools
+from print_ext import Table, PrettyException
+
+
+def pretty_num(n):
+    s = []
+    factor = 1024*1024*1024*1024*1024
+    for unit in 'PTGMk':
+        if f := n // factor:
+            s.append(f'{f}{unit}')
+            n -= f*factor
+        factor //= 1024
+    if not s or n: s.append(str(n))
+    return ','.join(s)
+
 
 
 class MetaStruct(type):
@@ -39,11 +52,12 @@ class Struct(metaclass=MetaStruct):
     enums = {}
     flags = {}
 
-    def __init__(self, stream, offset=0):
+    def __init__(self, stream, offset=0, **kwargs):
         self.stream = stream
         self.offset = offset
         self._errors = []
         self.__cache = {}
+        for k,v in kwargs.items(): setattr(self, k, v)
 
 
     def validate(self, all=False):
@@ -71,9 +85,13 @@ class Struct(metaclass=MetaStruct):
         if key not in self.flds:
             raise AttributeError(f"{key} is not a field")
         offset, size, format = self.flds[key]
-        self.stream.seek(offset+self.offset)
+        try:
+            self.stream.seek(offset+self.offset)
+        except OSError:
+            raise PrettyException(msg=f'EOF {pretty_num(offset+self.offset)} / {pretty_num(self.stream.seek(0,io.SEEK_END))}')
         data = self.stream.read(size)
-        assert(len(data) == size)
+        if len(data) != size:
+            raise PrettyException(msg=f"{key} needs {size}bytes, got {len(data)}")
         self.__cache[key] = struct.unpack_from(format, data)
         if len(self.__cache[key]) == 1: self.__cache[key] = self.__cache[key][0]
         return self.__cache[key]
