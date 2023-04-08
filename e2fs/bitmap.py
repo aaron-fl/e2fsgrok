@@ -56,3 +56,7 @@ class Bitmap():
             byte = self.byte(i)
             sum += functools.reduce(lambda a, i: a + bool(byte&(1<<i)), range(8), 0)
         return sum
+
+
+    def __getitem__(self, idx):
+        return bool(self.byte(idx//8) & (1<<idx%8))

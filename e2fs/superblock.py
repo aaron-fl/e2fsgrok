@@ -1,10 +1,8 @@
 from math import ceil, log
-from print_ext import PrettyException
+from print_ext import PrettyException, Printer
 from datetime import datetime
-from .struct import Struct, pretty_num
-from .block_descriptor import BlockDescriptor32, BlockDescriptor64
-from .bitmap import Bitmap
-
+from .struct import Struct, pretty_num, read
+from .block_group import BlockGroup
 
 class Superblock(Struct):
     size = 1024
@@ -192,15 +190,19 @@ class Superblock(Struct):
         '<I checksum Superblock checksum.',
     ]
 
+    def __init__(self, *args, **kwargs):
+        self.__inode_count = -1
+        super().__init__(*args, **kwargs)
+
 
     def validate(self, all=False):
         if self.magic != 0xEF53:
             self._errors.append(f"Bad magic")
             if not all: return self._errors
-        if super().validate(all=all) and not all: return self._errors
         if self.blocks_per_group != 8*self.block_size:
             self._errors.append(f'block group size mismatch: {self.blocks_per_group} != {8*self.block_size}')
             if not all: return self._errors
+        super().validate(all=all)
         return self._errors
 
 
@@ -232,27 +234,21 @@ class Superblock(Struct):
         return self._timestamp(k) if self[k] else 'Never'
         
 
-    def all(self, brute=False):
+    def super_bgs(self, brute=False):
         if not self.feature_ro_compat & self.RO_COMPAT_SPARSE_SUPER: brute = True
-        is_pow = lambda n, base: int(x:=log(n, base)) == x
-        is_super = lambda n: n==0 or is_pow(n,3) or is_pow(n,5) or is_pow(n,7)
         for bg in range(0, self.bg_count):
-            if not (brute or is_super(bg)): continue
+            bgrp = self.blkgrp(bg)
+            if not (brute or bgrp.is_super()): continue
             sb = Superblock(self.stream, bg*self.bg_size + (0 if bg else 1024))
             sb.validate()
             if sb._errors and sb._errors[0] == "Bad magic": continue
             sb.validate(all=True)
-            yield bg, sb
+            yield bgrp, sb
 
 
     def summary(self, print):
         print(f"{self.name!r} {self.block_size//1024}k/{pretty_num(self.blocks_count_lo*self.block_size)}  {self.bg_count}grps")
         print(self.pretty_val('flags'), ' ', self.pretty_val('feature_compat'), ' ', self.pretty_val('feature_incompat'),' ', self.pretty_val('feature_ro_compat'))
-
-
-    @property
-    def bg_desc_blocks_count(self):
-        return ceil(self.bg_count * self.BlockDescriptor.size / self.block_size)
 
 
     @property
@@ -268,8 +264,12 @@ class Superblock(Struct):
 
     @property
     def block_size(self):
-        return 2**(10+self.log_block_size)
-
+        try:
+            return self.__block_size
+        except:
+            self.__block_size = 2**(10+self.log_block_size)
+        return self.__block_size
+        
 
     @property
     def bg_size(self):
@@ -286,47 +286,51 @@ class Superblock(Struct):
         return 2**(10+self.log_cluster_size)
 
 
-    @property
-    def BlockDescriptor(self):
-        return BlockDescriptor64 if self.desc_size > 32 else BlockDescriptor32
-    
-
-    def block_descriptors(self, bg):
-        if not self.on_bg(bg):
-            raise PrettyException(msg=f"no superblock at bg#{bg}")
-        for i in range(self.bg_count):
-            yield self.BlockDescriptor(self.stream, bg * self.bg_size + self.block_size + i*self.BlockDescriptor.size, bg=i, bg_src=bg)
-        
-
     def all_block_descriptors(self):
         all_bg = {}
-        for bg, _ in self.all():
-            for bg in self.block_descriptors(bg):
-                bg.copies = 1
-                h = hash(bg.raw())
+        for bgrp, _ in self.super_bgs():
+            for bg_desc in bgrp.descriptors():
+                bg_desc.copies = 1
+                h = hash(bg_desc.raw())
                 if h in all_bg: all_bg[h].copies += 1
-                else: all_bg[h] = bg
+                else: all_bg[h] = bg_desc
         return all_bg 
-
     
-    def on_bg(self, bg):
-        sb = Superblock(self.stream, bg * self.bg_size + (0 if bg else 1024))
-        return None if sb.validate() else sb
+    @property
+    def inode_count(self):
+        if self.__inode_count < 0:
+            self.__inode_count = self.inodes_per_group * self.bg_count
+        return self.__inode_count
+
+
+    def inode(self, id, **kwargs):
+        if id < 1 or id >= self.inode_count: raise ValueError(f"inode out of range (1, {self.inode_count})  {id}")
+        return self.blkgrp((id - 1) // self.inodes_per_group, **kwargs).inode_idx(id)
+        
+
+    def blk_data(self, blkid, validate=True, calc=True):
+        errs = []
+        if validate:
+            bg = blkid // self.blocks_per_group
+            if not self.data_bitmap(bg,calc)[blkid%self.blocks_per_group]:
+                errs.append(f'free block {blkid} #{bg}')
+        return errs, read(self.stream, blkid*self.block_size, self.block_size)
+
+
+    def blkgrp(self, bg, **kwargs):
+        if bg < 0 or bg >= self.bg_count: raise ValueError(f"bg out of range (0, {self.bg_count})  {bg}")
+        return BlockGroup(self, bg, **kwargs)
+
+
+    def each_blkgrp(self, **kwargs):
+        for bg in range(self.bg_count):
+            yield self.blkgrp(bg, **kwargs)
+
+
+    def blkid_free(self, blkid):
+        return self.blkgrp(blkid // self.blocks_per_group).blkidx_free(blkid % self.blocks_per_group)
+
+
+    def inode_free(self, id, **kwargs):
+        return not self.blkgrp((id - 1) // self.inodes_per_group, **kwargs).inode_bitmap()[(id-1)%self.inodes_per_group]
     
-
-    def bitmap_offset(self, bg):
-        if self.on_bg(bg):
-            return 1 + self.bg_desc_blocks_count + self.reserved_gdt_blocks
-        return 0
-
-    def bitmaps(self, bg):
-        off = self.bitmap_offset(bg)
-        #print(f" #{bg} offset {off} {bg*self.blocks_per_group + off}")
-        data = Bitmap(self.stream, bg*self.bg_size + off*self.block_size, self.block_size)
-        inode = Bitmap(self.stream, bg*self.bg_size + (off+1)*self.block_size, self.block_size)
-        return data, inode
-
-
-    #def all_free(self):
-    #    for bg in range(self.bg_count):
-            

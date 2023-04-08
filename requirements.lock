@@ -1,4 +1,5 @@
 docstring-parser==0.15
 print-ext==2.1.1
 wcwidth==0.2.6
-yaclipy==1.1.1
+yaclipy==1.2.1
+yaclipy-tools==0.10.1

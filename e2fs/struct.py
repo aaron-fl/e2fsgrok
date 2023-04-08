@@ -31,10 +31,10 @@ class MetaStruct(type):
         dict['doc'] = {}
         dict['flds'] = {}
         enums = dict.pop('enums')
-        flags = dict.pop('flags')
+        flags = dict.pop('flags').copy()
         dict['_enums'] = {}
         dict['_flags'] = {}
-        assert(not enums.keys()&flags.keys())
+        assert(not enums.keys()&flags.keys()), f"{enums.keys()}  {flags.keys()}"
         flags.update(enums)
         for name, vals in flags.items():
             d = dict['_enums' if name in enums else '_flags']
@@ -93,6 +93,7 @@ class Struct(metaclass=MetaStruct):
 
 
     def __getitem__(self, key):
+        if key in dir(self): return getattr(self, key)
         try:
             return self.__cache[key]
         except KeyError:
@@ -124,7 +125,8 @@ class Struct(metaclass=MetaStruct):
 
 
     def __pretty__(self, print, **kwargs):
-        tbl = Table(1,1,1)
+        tbl = Table(1,1,1,tmpl='pad')
+        tbl.cell('C0', style='1', just='>')
         for fld in self.flds:
             val = str(self[fld])
             pval = str(self.pretty_val(fld))
@@ -132,7 +134,7 @@ class Struct(metaclass=MetaStruct):
             tbl(fld, '\t', val[:40], '\t', pval[:100],'\t')#, self.doc[fld].replace('\t', ' ')[:40],'\t')
         print(tbl)
         if self._errors:
-            print.card('Errors\t', *[f'* {e}\n' for e in self._errors])
+            print.card('Errors\t', *[f'* {e}\n' for e in self._errors], style='err')
 
 
     def diff(self, print, other):
@@ -145,4 +147,4 @@ class Struct(metaclass=MetaStruct):
             tbl(fld, '\t', val[:40], '\t', pval[:100],'\t')#, self.doc[fld].replace('\t', ' ')[:40],'\t')
         print(tbl)
         if self._errors:
-            print.card('Errors\t', *[f'* {e}\n' for e in self._errors])
+            print.card('Errors\t', *[f'* {e}\n' for e in self._errors], style='err')
