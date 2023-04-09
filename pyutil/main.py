@@ -1,30 +1,11 @@
 import yaclipy as CLI
-import pickle, struct
+import pickle, struct, re, hashlib
 from math import ceil
 from print_ext import Printer, PrettyException, Line
 from e2fs import Superblock, Bitmap
 from e2fs.struct import pretty_num, read
 from e2fs.directory import DirectoryBlk
 from yaclipy_tools.commands import grep, grep_groups
-
-# FIXME
-# Lost+found
-# etc
-# var
-
-# Root INODE  2051 -> 2107
-
-# Inode 0x21
-#    2051 ( 0x1a8002)
-
-# Inode 0x1a8001 #53
-#   ALL ZEROS 
-
-
-# Possible var
-#  18799877
-#  !! 57979448 0x1a8001
-#  1744896
 
 
 def superblocks(*, _sb, limit__l=1):
@@ -49,7 +30,7 @@ def superblocks(*, _sb, limit__l=1):
 
 def descriptors(*, _sb, limit__l=0):
     ''' Show descriptors for a given block.
-    Output is #A,B (C) D/E/F  G/H
+    Output is #A,B (C) D+E+F  G/H
      * A : block group id
      * B : super-block-group that this descriptor was found in
      * C : Number of identical descriptors in other super-block-groups
@@ -63,40 +44,36 @@ def descriptors(*, _sb, limit__l=0):
         --limit <int>, -l <int>
             Only show descriptors for the first `-l` descriptors
     '''
-    for blk in _sb.all_block_descriptors():
-        if limit__l and blk.bg >= limit__l: continue
-        print(f"#{blk.bg},{blk.bg_src} ({blk.copies}) {blk.block_bitmap_lo}/{blk.inode_bitmap_lo}/{blk.inode_table_lo}  {blk.free_blocks_count_lo}/{blk.free_inodes_count_lo}")
+    for d in _sb.all_block_descriptors():
+        if limit__l and d.bg >= limit__l: continue
+        bgrp = _sb.blkgrp(d.bg)
+        line = Line('\b2 $' if bgrp.is_super() else '#', f'{d.bg},{d.bg_src}  (', f'\b2 {d.copies}',')  ')
+        n = _sb.blocks_per_group - len(bgrp.data_bitmap())
+        line(f"{n} \berr {d.free_blocks_count_lo}" if n != d.free_blocks_count_lo else n, '\bdem /')
+        n = _sb.inodes_per_group - len(bgrp.inode_bitmap())
+        line(f"{n} \berr {d.free_inodes_count_lo}" if n != d.free_inodes_count_lo else n,'  ')
+        off = bgrp.bitmap_offset + d.bg * _sb.blocks_per_group
+        line(f"{hex(off)} \berr {hex(d.block_bitmap_lo)}" if off != d.block_bitmap_lo else hex(off),'\bdem +')
+        line(f"{1} \berr {d.inode_bitmap_lo-off}" if off+1 != d.inode_bitmap_lo else 1,'\bdem +')
+        line(f"{2} \berr {d.inode_table_lo-off}" if off+2 != d.inode_table_lo else 2,'  ')
+        Printer(line)
 
 
 
-def blkgrp(bg=0, *, _sb):
+def blkgrp(bg=0, *, _sb, free__f=False):
     ''' Show info about a block group
     
     Parameters:
         <block-group-id>
             The block group number (not block number)
-    '''
-    return _sb.blkgrp(bg)
-
-
-
-def check_desc(bg=0, *, _sb):
-    ''' Analyze the descriptors in a block-group to find discrepancies
-    Output: A  B  C
-    Parameters:
-        <block-group-id>
-            The block group number (not block number) who's discrepancy table needs checking
+        --free, -f
+            Show free blocks
     '''
     bgrp = _sb.blkgrp(bg)
-    for d in bgrp.descriptors():
-        data = bgrp.data_bitmap()
-        inode = bgrp.inode_bitmap()
-        err = ''
-        if (ldata:=(_sb.blocks_per_group-len(data))) != d.free_blocks_count_lo: err += 'blk_count '
-        if (linode:=(_sb.inodes_per_group-len(inode))) != d.free_inodes_count_lo: err += 'inode_count '
-        off = bgrp.bitmap_offset() + d.bg * _sb.blocks_per_group
-        if off != d.block_bitmap_lo: err += 'offset'
-        if err: Printer(err, f'  \b1 {d.bg}',f'  {d.block_bitmap_lo} {off} --  {d.free_blocks_count_lo} {ldata}  --  {d.free_inodes_count_lo} {linode}')
+    if free__f:
+        bmp = bgrp.data_bitmap()
+        Printer('  '.join([str(blkid + bgrp.bg*_sb.blocks_per_group) for blkid in set(range(bmp.size*8)) - set(bmp)]))
+    return bgrp
 
 
 
@@ -140,7 +117,7 @@ def blk_data(blkid=0, *, _sb):
             while i < _sb.block_size:
                 b = data[i]
                 word += f"{b:02x}"
-                ascii += chr(b) if b > 32 and b < 128 else ' '
+                ascii += chr(b) if b > 32 and b < 127 else ' '
                 i += 1
                 if i%2 == 0: break
             l(' \bdem$' if word == '0'*len(word) else ' ', word)
@@ -149,7 +126,7 @@ def blk_data(blkid=0, *, _sb):
     
 
 
-def ls(root_inode=2, *, _sb, depth__d=0, keep_going__k=False):
+def ls(root_inode=2, *, _sb, depth__d=0, keep_going__k=False, parent__p:int=None):
     ''' Show a directory listing from an inode
 
     Parameters:
@@ -158,47 +135,61 @@ def ls(root_inode=2, *, _sb, depth__d=0, keep_going__k=False):
         --depth <int>, -d <int> | default=0
             How many layers deep to show
         --keep_going, -k
-            Continue even if errors are encountered, otherwise stop on the first error 
+            Continue even if errors are encountered, otherwise stop on the first error
+        --parent <inode>, -p <inode>
+            The known parent of the root_inode (for checking purposes)
     '''
-    nerrors = 0
+    class CollectedErrors(PrettyException):
+        def __pretty__(self, print, **kwargs):
+            for args,kwargs in self.errors:
+                kwargs.setdefault('style','err')
+                print.card(*args, **kwargs)
+            print(f"{len(self.errors)} Errors", style='err' if self.errors else 'g')
+
+    errs = CollectedErrors(errors=[])
     def _error(*args, **kwargs):
-        nonlocal nerrors
-        kwargs.setdefault('style','err')
-        Printer().card(*args, **kwargs)
-        nerrors+=1
-        if not keep_going__k: raise PrettyException(msg='error encountered')
+        errs.errors.append((args, kwargs))
+        if not keep_going__k: raise errs
         
-    def branch(parent_id, inode, depth=0):
-        inode.validate(_sb, all=True)
-        if inode._errors: _error(f"inode {hex(inode.id)} Errors\t", *[f"* {e}\n" for e in inode._errors])
+
+    def branch(parent_id, inode, depth=0, full_path=''):
         for blkid in inode:
             d = DirectoryBlk(_sb, blkid)
             d.validate(all=True)
             Printer(f'#{blkid}', style='dem')
-            if d._errors: _error(f"blk #{blkid} Errors\t", *[f"* {e}\n" for e in d._errors])
+            if d._errors: _error(f"blk #{blkid} Errors\t{full_path}\n",*[f"* {e}\n" for e in d._errors])
             for e in d.entries:
+                path = full_path + f'\bdem /\b {e.name_utf8}\bdem  {hex(e.inode)} \b '
                 if e.name == b'' and e.inode == 0: continue
                 if e.name == b'.':
-                    if e.inode != inode.id: _error(f". Error\t* self inode mismatch {hex(e.inode)} != {hex(inode.id)}")
+                    if e.inode != inode.id: _error(f". Error\t{path}\n* self inode mismatch {hex(e.inode)} != {hex(inode.id)}")
                     continue
                 if e.name == b'..':
                     if parent_id != None and e.inode != parent_id:
-                        _error(f".. Error\t* parent inode mismatch {hex(e.inode)} != {hex(parent_id)}")
+                        _error(f".. Error\t{path}\n* parent inode mismatch {hex(e.inode)} != {hex(parent_id)}")
                     continue
                 try:
                     if e.name in b'..': raise ValueError()
                     child = _sb.inode(e.inode)
                 except ValueError:
+                    child = None
+                if child == None:
                     Printer('  '*depth, f'\b! {e.name_utf8}', f'  \b1 {hex(e.inode)}',)
                     continue
-                Printer('  '*depth, f'\b! {e.name_utf8}', f'  \b1 {hex(e.inode)}', '  ', child.pretty_val('mode'))
+                child.validate(_sb, all=True)
+                tail = f'\berr {len(child._errors)} Errors' if child._errors else child.pretty_val('mode')
+                Printer('  '*depth, f'\b! {e.name_utf8}', f'  \b1 {hex(e.inode)}', '  ', tail)
+                if child._errors: _error(f"inode {hex(child.id)} Errors\t{path}\n", *[f"* {e}\n" for e in child._errors])
                 if child.ftype != child.S_IFDIR: continue
                 if depth+1 == depth__d: continue
-                branch(inode.id, child, depth+1)
+                branch(inode.id, child, depth+1, path)
         return inode
 
-    branch(None, _sb.inode(root_inode))
-    Printer(f"{nerrors} Errors", style='err' if nerrors else 'g')
+    inode = _sb.inode(root_inode)
+    inode.validate(_sb, all=True)
+    if inode._errors: _error(f"inode {hex(inode.id)} Errors\t", *[f"* {e}\n" for e in inode._errors])
+    branch(parent__p, inode)
+    return errs
     
 
 
@@ -318,7 +309,7 @@ def rootfiles(*, _input, sb=1024, fpc='local/parent_child.pickle'):
     
 
 
-def dblk(blkid:int, *, _sb):
+def blkls(blkid:int, *, _sb):
     ''' Show the contents of a directory block
     '''
     Printer().hr(blkid)
@@ -340,29 +331,78 @@ def dblk(blkid:int, *, _sb):
 
 
 
-def www(*, _sb, fdblks='local/pruned.pickle', fpc='local/www.pickle'):
+def search(pattern, *, _sb, fdblks='local/pruned.pickle', fmatches=None, verbose__v=False):
+    ''' Search all the identified directory-blocks for a file that matches `pattern`
+
+    Parameters:
+        <pattern>
+            A regex pattern to match filenames against
+    '''
+    hval = hashlib.md5(pattern.encode('utf8')).hexdigest()
+    if fmatches == None: fmatches = f"local/search/{hval}.pickle"
+    pat = re.compile(pattern)
     with open(fdblks, 'rb') as f:
         dblks = pickle.load(f)
+        blkids = set()
+        for blks in dblks.values(): blkids.update(blks)
     try:
-        with open(fpc, 'rb') as f:
-            mappings = pickle.load(f)
+        with open(fmatches, 'rb') as f:
+            matches = pickle.load(f)
     except:
-        mappings = set()
-        bi = 0
-        for e, blks in dblks.items():
-            for blkid in blks:
-                if (bi:=bi+1)%10000 == 0:
-                    print(f"{bi} {len(mappings)}")
+        matches = set()
+        with Printer().progress(f"searching for {pattern!r} -> {fmatches}", height_max=10) as p:
+            for bi, blkid in enumerate(blkids):
+                if bi%4096 == 0:
+                    p(f"{bi}/{len(blkids)} {bi*100/len(blkids):.1f}%  found: {len(matches)} ", tag={'progress':(bi,len(blkids))})
                 d = DirectoryBlk(_sb, blkid)
                 for e in d:
-                    if e.name != b'www': continue
-                    mappings.add( blkid )
+                    try: assert(pat.fullmatch(e.name_utf8, re.I))
+                    except: continue
+                    matches.add( blkid )
                     break
-        with open(fpc, 'wb') as f:
-            pickle.dump(mappings, f)
-    for blkid in mappings:
-        dblk(blkid, _sb=_sb)
-    print(len(mappings))
+        with open(fmatches, 'wb') as f:
+            pickle.dump(matches, f)
+    for blkid in matches:
+        if verbose__v:
+            blkls(blkid, _sb=_sb)
+            continue
+        d = DirectoryBlk(_sb, blkid)
+        for e in d:
+            try: assert(pat.fullmatch(e.name_utf8, re.I))
+            except: continue
+            Printer(f"{blkid} : ", Line(style='!').insert(0,e.name_utf8),f" {hex(e.inode)}")
+            break
+    Printer(f"{len(matches)} blocks found from {fmatches}")
+
+
+
+def isearch(inode:int, *, _sb, fdblks='local/pruned.pickle', fmatches=None):
+    ''' Find all directory entries that point to this inode
+    '''
+    if fmatches == None: fmatches = f"local/isearch/{hex(inode)}.pickle"
+    with open(fdblks, 'rb') as f:
+        dblks = pickle.load(f)
+        blkids = set()
+        for blks in dblks.values(): blkids.update(blks)
+    try:
+        with open(fmatches, 'rb') as f:
+            matches = pickle.load(f)
+    except:
+        matches = set()
+        with Printer().progress(f"searching for entries pointing to {inode!r}", height_max=10) as print:
+            for bi, blkid in enumerate(blkids):
+                if bi%4096 == 0:
+                    print(f"{bi}/{len(blkids)} {bi*100/len(blkids):.1f}%  found: {len(matches)} ", tag={'progress':(bi,len(blkids))})
+                d = DirectoryBlk(_sb, blkid)
+                for e in d:
+                    if e.inode != inode: continue
+                    matches.add(blkid)
+                    break
+        with open(fmatches, 'wb') as f:
+            pickle.dump(matches, f)
+    for blkid in matches:
+        blkls(blkid, _sb=_sb)
+    print(len(matches))
 
 
 
@@ -374,16 +414,45 @@ def areyousure():
 
 
 def change_block(inode:int, index:int, blkid:int, *, _sb):
-    ''' Change one of the blockids in an inode
+    ''' Change one of the blkids of an inode
+
+    Parameters:
+        <inode>
+            Which inode's block to modify
+        <index>
+            which block entry to modify
+        <blkid>
+            What new blockid to insert
     '''
     inode = inode_(inode, _sb=_sb)
-    l = list(inode.blocks)
+    l = list(inode.block)
     l[index] = blkid
-    Printer(f"OLD Blocks: ", inode.blocks)
+    Printer(f"OLD Blocks: ", inode.block)
     Printer(f"NEW Blocks: ", tuple(l))
     areyousure()
-    offset = inode.offset + inode.flds['blocks'][0] + 4*index
+    offset = inode.offset + inode.flds['block'][0] + 4*index
     data = struct.pack('<I', blkid)
+    _sb.stream.seek(offset)
+    _sb.stream.write(data)
+    Printer("Wrote:", data, " to ", pretty_num(offset))
+
+
+
+def change_blkcount(inode:int, nblks:int, *, _sb):
+    ''' Change one of the blkids of an inode
+
+    Parameters:
+        <inode>
+            Which inode's block to modify
+        <nblks>
+            How many blocks should it have
+    '''
+    inode = inode_(inode, _sb=_sb)
+    new_lo = nblks * (2<<_sb.log_block_size)
+    Printer(f"Change blocks_lo from {inode.blocks_lo} -> {new_lo}?")
+    areyousure()
+    offset = inode.offset + inode.flds['blocks_lo'][0]
+    data = struct.pack('<I', new_lo)
     _sb.stream.seek(offset)
     _sb.stream.write(data)
     Printer("Wrote:", data, " to ", pretty_num(offset))
@@ -392,8 +461,16 @@ def change_block(inode:int, index:int, blkid:int, *, _sb):
 
 def change_dir_entry(blkid:int, name, inode:int, *, _sb):
     ''' Change one of the directory entries' inodes
+
+    Parameters:
+        <blkid>
+            The dblk of entries to modify
+        <name>
+            The filename who's inode you want to change
+        <inode>
+            The new inode that filename should point to
     '''
-    dblk(blkid, _sb=_sb)
+    blkls(blkid, _sb=_sb)
     d = DirectoryBlk(_sb, blkid)
     for e in d:
         if e.name_utf8 == name: break   
@@ -410,7 +487,22 @@ def change_dir_entry(blkid:int, name, inode:int, *, _sb):
 
 
 
-@CLI.sub_cmds(grep, change_dir_entry, change_block, superblocks, descriptors, blkgrp, check_desc, root_inodes, inode_, blk_data, ls, find_blk_dirs, dblk, find_inode_dirs, dotfiles, rootfiles, www)
+def cp(inode:int, dest, *, _sb):
+    ''' Copy a file to some external destination
+    '''
+    inode = _sb.inode(inode)
+    Printer(inode)
+    if inode.ftype != inode.S_IFREG: raise PrettyException(msg=f"Bad file type {inode.pretty_val('ftype')}")
+    with open(dest, 'wb') as f:
+        size = inode.size_lo
+        for blkid in inode:
+            data = read(_sb.stream, blkid*_sb.block_size, min(size, _sb.block_size))
+            print(f"Read {len(data)} from {blkid}")
+            size -= len(data)
+            f.write(data)
+
+
+@CLI.sub_cmds(grep, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, find_blk_dirs, blkls, find_inode_dirs, dotfiles, rootfiles, search, change_blkcount, isearch, cp)
 def main(*, sb=1024, write__w=False, fname__f=None):
     grep_groups({
         'e2fs': [('py', 'e2fs', '*/__pycache__/*')],

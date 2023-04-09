@@ -1,4 +1,5 @@
 from math import ceil, log
+from print_ext import PrettyException
 from .bitmap import Bitmap
 from .inode import INode128
 from .block_descriptor import BlockDescriptor32, BlockDescriptor64
@@ -22,6 +23,7 @@ class BlockGroup():
         return None if sb.validate() else sb
     
 
+    @property
     def bitmap_offset(self):
         if self.is_super():
             return 1 + self.bg_desc_blocks_count + self.sb.reserved_gdt_blocks
@@ -29,16 +31,16 @@ class BlockGroup():
 
 
     def inode_bitmap(self):
-        return Bitmap(self.sb.stream, self.bg*self.sb.bg_size + (self.bitmap_offset()+1)*self.sb.block_size, self.sb.inodes_per_group//8)
+        return Bitmap(self.sb.stream, self.bg*self.sb.bg_size + (self.bitmap_offset + 1)*self.sb.block_size, self.sb.inodes_per_group//8)
 
 
     def data_bitmap(self):
-        return Bitmap(self.sb.stream, self.bg*self.sb.bg_size + (self.bitmap_offset()+0)*self.sb.block_size, self.sb.block_size)
+        return Bitmap(self.sb.stream, self.bg*self.sb.bg_size + (self.bitmap_offset + 0)*self.sb.block_size, self.sb.block_size)
 
 
     def inode_table_blkid(self):
         assert(self.bg >= 0)
-        return self.bg*self.sb.blocks_per_group + self.bitmap_offset() + 2
+        return self.bg*self.sb.blocks_per_group + self.bitmap_offset + 2
 
 
     @property

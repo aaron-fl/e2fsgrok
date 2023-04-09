@@ -125,13 +125,13 @@ class Struct(metaclass=MetaStruct):
 
 
     def __pretty__(self, print, **kwargs):
-        tbl = Table(1,1,1,tmpl='pad')
+        tbl = Table(1,1,tmpl='pad')
         tbl.cell('C0', style='1', just='>')
         for fld in self.flds:
             val = str(self[fld])
             pval = str(self.pretty_val(fld))
             if pval == val: val = ''
-            tbl(fld, '\t', val[:40], '\t', pval[:100],'\t')#, self.doc[fld].replace('\t', ' ')[:40],'\t')
+            tbl(fld, '\t', pval,'\t')#, self.doc[fld].replace('\t', ' ')[:40],'\t')
         print(tbl)
         if self._errors:
             print.card('Errors\t', *[f'* {e}\n' for e in self._errors], style='err')

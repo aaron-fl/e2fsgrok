@@ -196,6 +196,9 @@ class INode(Struct):
         return self._errors
 
 
+    def __repr__(self):
+        return f"{hex(self.id)} {self.pretty_val('mode')} {pretty_num(self.size_lo)} bytes"
+
 
 
 class INode128(INode):
