@@ -57,8 +57,9 @@ class DirectoryBlk():
             self._errors.append(f"Block {self.blkid} is free")
 
 
-    def each_entry(self):
+    def __iter__(self):
         return EntryIter(self)
+
 
 
 class EntryIter():
@@ -67,9 +68,7 @@ class EntryIter():
         self.sb = dblk.sb
         self.offset = dblk.blkid * self.sb.block_size
         self.next_blk = (dblk.blkid+1)*self.sb.block_size
-    
-    def __iter__(self):
-        return self
+        
 
     def __next__(self):
         if self.offset >= self.next_blk: raise StopIteration()

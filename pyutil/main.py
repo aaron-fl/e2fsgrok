@@ -1,5 +1,5 @@
 import yaclipy as CLI
-import pickle
+import pickle, struct
 from math import ceil
 from print_ext import Printer, PrettyException, Line
 from e2fs import Superblock, Bitmap
@@ -284,7 +284,7 @@ def dotfiles(*,_input, sb=1024, fdblks='local/pruned.pickle', fpc='local/parent_
                 if (bi:=bi+1)%10000 == 0:
                     print(f"{bi} {len(mappings)}")
                 dblk = DirectoryBlk(sb, blkid)
-                e = iter(dblk.each_entry())
+                e = iter(dblk)
                 d0 = next(e)
                 if d0.name != b'.': continue
                 d1 = next(e)
@@ -305,7 +305,7 @@ def rootfiles(*, _input, sb=1024, fpc='local/parent_child.pickle'):
         if inode != 2: continue
         print(f"{blkid} {hex(inode)} {hex(pnode)}")
         d = DirectoryBlk(sb, blkid)
-        for e in d.each_entry():
+        for e in d:
             name = e.name_utf8
             if name in ['.', '..']: continue
             roots.setdefault(name, {})
@@ -341,7 +341,6 @@ def dblk(blkid:int, *, _sb):
 
 
 def www(*, _sb, fdblks='local/pruned.pickle', fpc='local/www.pickle'):
-    sb = Superblock(_input, sb)
     with open(fdblks, 'rb') as f:
         dblks = pickle.load(f)
     try:
@@ -354,21 +353,64 @@ def www(*, _sb, fdblks='local/pruned.pickle', fpc='local/www.pickle'):
             for blkid in blks:
                 if (bi:=bi+1)%10000 == 0:
                     print(f"{bi} {len(mappings)}")
-                d = DirectoryBlk(sb, blkid)
-                for e in d.each_entry():
+                d = DirectoryBlk(_sb, blkid)
+                for e in d:
                     if e.name != b'www': continue
                     mappings.add( blkid )
                     break
         with open(fpc, 'wb') as f:
             pickle.dump(mappings, f)
     for blkid in mappings:
-        dblk(blkid, _input=sb.stream)
+        dblk(blkid, _sb=_sb)
     print(len(mappings))
 
 
 
+def areyousure():
+    Printer(f"\berr Are you sure?")
+    d = input('[y/N]')
+    if d != 'y': raise PrettyException(msg="Aborting")
 
-@CLI.sub_cmds(grep, superblocks, descriptors, blkgrp, check_desc, root_inodes, inode_, blk_data, ls, find_blk_dirs, dblk, find_inode_dirs, dotfiles, rootfiles, www)
+
+
+def change_block(inode:int, index:int, blkid:int, *, _sb):
+    ''' Change one of the blockids in an inode
+    '''
+    inode = inode_(inode, _sb=_sb)
+    l = list(inode.blocks)
+    l[index] = blkid
+    Printer(f"OLD Blocks: ", inode.blocks)
+    Printer(f"NEW Blocks: ", tuple(l))
+    areyousure()
+    offset = inode.offset + inode.flds['blocks'][0] + 4*index
+    data = struct.pack('<I', blkid)
+    _sb.stream.seek(offset)
+    _sb.stream.write(data)
+    Printer("Wrote:", data, " to ", pretty_num(offset))
+
+
+
+def change_dir_entry(blkid:int, name, inode:int, *, _sb):
+    ''' Change one of the directory entries' inodes
+    '''
+    dblk(blkid, _sb=_sb)
+    d = DirectoryBlk(_sb, blkid)
+    for e in d:
+        if e.name_utf8 == name: break   
+    else:
+        Printer(f"{name!r} not found in dblk #{blkid}", style='err')
+        return
+    Printer(f"Change: \b1 {name}\b 's inode from {hex(e.inode)} => {hex(inode)}")
+    areyousure()
+    offset = e.offset + e.flds['inode'][0]
+    data = struct.pack('<I', inode)
+    _sb.stream.seek(offset)
+    _sb.stream.write(data)
+    Printer("Wrote:", data, " to ", pretty_num(offset))
+
+
+
+@CLI.sub_cmds(grep, change_dir_entry, change_block, superblocks, descriptors, blkgrp, check_desc, root_inodes, inode_, blk_data, ls, find_blk_dirs, dblk, find_inode_dirs, dotfiles, rootfiles, www)
 def main(*, sb=1024, write__w=False, fname__f=None):
     grep_groups({
         'e2fs': [('py', 'e2fs', '*/__pycache__/*')],
@@ -376,7 +418,7 @@ def main(*, sb=1024, write__w=False, fname__f=None):
     })
 
     if fname__f:
-        with open(fname__f, 'asdf' if write__w else 'rb') as f:
+        with open(fname__f, 'r+b' if write__w else 'rb') as f:
             yield dict(_sb=Superblock(f, sb))
     else:
         yield None
