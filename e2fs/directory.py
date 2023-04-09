@@ -119,7 +119,7 @@ class DirectoryEntry(Struct):
         return f'{self.name_utf8!r} ({self.name_len}) #{self.blkid} -> {self.inode}'
 
 
-    def validate(self, block_size, all=False, nonameok=False):
+    def validate(self, block_size, all=False):
         if self.name_len > self.rec_len-8:
             self._errors.append(f"name longer than record")
             if not all: return self._errors
@@ -130,8 +130,6 @@ class DirectoryEntry(Struct):
             if c < 32:
                 self._errors.append(f"Invalid name chars {c}")
                 break
-        if not nonameok and self.name == b'':
-            self._errors.append(f"No name")
         super().validate(all=all)
         return self._errors
 

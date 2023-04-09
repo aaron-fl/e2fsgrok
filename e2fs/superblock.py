@@ -269,7 +269,7 @@ class Superblock(Struct):
         except:
             self.__block_size = 2**(10+self.log_block_size)
         return self.__block_size
-        
+
 
     @property
     def bg_size(self):
@@ -287,6 +287,7 @@ class Superblock(Struct):
 
 
     def all_block_descriptors(self):
+        ''' Collect every descriptor from every super-block-group and organize them by same hash '''
         all_bg = {}
         for bgrp, _ in self.super_bgs():
             for bg_desc in bgrp.descriptors():
@@ -294,8 +295,9 @@ class Superblock(Struct):
                 h = hash(bg_desc.raw())
                 if h in all_bg: all_bg[h].copies += 1
                 else: all_bg[h] = bg_desc
-        return all_bg 
-    
+        return all_bg.values()
+
+
     @property
     def inode_count(self):
         if self.__inode_count < 0:
@@ -307,15 +309,6 @@ class Superblock(Struct):
         if id < 1 or id >= self.inode_count: raise ValueError(f"inode out of range (1, {self.inode_count})  {id}")
         return self.blkgrp((id - 1) // self.inodes_per_group, **kwargs).inode_idx(id)
         
-
-    def blk_data(self, blkid, validate=True, calc=True):
-        errs = []
-        if validate:
-            bg = blkid // self.blocks_per_group
-            if not self.data_bitmap(bg,calc)[blkid%self.blocks_per_group]:
-                errs.append(f'free block {blkid} #{bg}')
-        return errs, read(self.stream, blkid*self.block_size, self.block_size)
-
 
     def blkgrp(self, bg, **kwargs):
         if bg < 0 or bg >= self.bg_count: raise ValueError(f"bg out of range (0, {self.bg_count})  {bg}")

@@ -3,7 +3,7 @@ import pickle
 from math import ceil
 from print_ext import Printer, PrettyException, Line
 from e2fs import Superblock, Bitmap
-from e2fs.struct import pretty_num
+from e2fs.struct import pretty_num, read
 from e2fs.directory import DirectoryBlk
 from yaclipy_tools.commands import grep, grep_groups
 
@@ -17,7 +17,8 @@ from yaclipy_tools.commands import grep, grep_groups
 # Inode 0x21
 #    2051 ( 0x1a8002)
 
-# Inode 0x1a8001
+# Inode 0x1a8001 #53
+#   ALL ZEROS 
 
 
 # Possible var
@@ -26,83 +27,139 @@ from yaclipy_tools.commands import grep, grep_groups
 #  1744896
 
 
-def superblocks(*, _input, sb=1024, limit__l=1):
-    sb = Superblock(_input, sb)
+def superblocks(*, _sb, limit__l=1):
+    ''' Show superblock info
+
+    Parameters:
+        --limit <int>, -l <int>
+            Only show this many superblocks (of the backup copies)
+    '''
     i = 0
-    for bgrp, osb in sb.super_bgs():
+    for bgrp, osb in _sb.super_bgs():
         Printer().hr(f"{bgrp.bg} : {pretty_num(osb.offset)}")
-        if bgrp.bg == sb.block_group_nr:
-            sb.summary(Printer())
-            Printer().pretty(sb)
+        if bgrp.bg == _sb.block_group_nr:
+            _sb.summary(Printer())
+            Printer().pretty(_sb)
         else:
-            sbb.diff(Printer(), sb)
+            sbb.diff(Printer(), _sb)
         i += 1
         if i == limit__l: break
 
 
 
-def descriptors(*, _input, sb=1024, blkgrp__b=0, verbose__v=False, limit__l=0):
-    sb = Superblock(_input, sb)
-    for _, blk in sb.all_block_descriptors().items():
+def descriptors(*, _sb, limit__l=0):
+    ''' Show descriptors for a given block.
+    Output is #A,B (C) D/E/F  G/H
+     * A : block group id
+     * B : super-block-group that this descriptor was found in
+     * C : Number of identical descriptors in other super-block-groups
+     * D : Blk bitmap blkid
+     * E : Inode bitmap blkid
+     * F : Inode table blkid
+     * G : Number of free blocks
+     * H : Number of free inodes
+
+    Parameters:
+        --limit <int>, -l <int>
+            Only show descriptors for the first `-l` descriptors
+    '''
+    for blk in _sb.all_block_descriptors():
         if limit__l and blk.bg >= limit__l: continue
         print(f"#{blk.bg},{blk.bg_src} ({blk.copies}) {blk.block_bitmap_lo}/{blk.inode_bitmap_lo}/{blk.inode_table_lo}  {blk.free_blocks_count_lo}/{blk.free_inodes_count_lo}")
 
 
 
-def bgrp(*, _input, sb=1024, blkgrp__b=0):
-    sb = Superblock(_input, sb)
-    return sb.blkgrp(blkgrp__b)
+def blkgrp(bg=0, *, _sb):
+    ''' Show info about a block group
+    
+    Parameters:
+        <block-group-id>
+            The block group number (not block number)
+    '''
+    return _sb.blkgrp(bg)
 
 
-def check_desc(*, _input, sb=1024, blkgrp__b=0):
-    sb = Superblock(_input, sb)
-    bgrp = sb.blkgrp(blkgrp__b)
+
+def check_desc(bg=0, *, _sb):
+    ''' Analyze the descriptors in a block-group to find discrepancies
+    Output: A  B  C
+    Parameters:
+        <block-group-id>
+            The block group number (not block number) who's discrepancy table needs checking
+    '''
+    bgrp = _sb.blkgrp(bg)
     for d in bgrp.descriptors():
         data = bgrp.data_bitmap()
         inode = bgrp.inode_bitmap()
-        err = False
-        if (ldata:=(sb.blocks_per_group-len(data))) != d.free_blocks_count_lo: err = True
-        if (linode:=(sb.inodes_per_group-len(inode))) != d.free_inodes_count_lo: err = True
-        off = bgrp.bitmap_offset() + d.bg*sb.blocks_per_group
-        if off != d.block_bitmap_lo: err = True
-        if err: print(err, d.bg, d.block_bitmap_lo, off, '--', d.free_blocks_count_lo, ldata,'--', d.free_inodes_count_lo, linode)
-    
+        err = ''
+        if (ldata:=(_sb.blocks_per_group-len(data))) != d.free_blocks_count_lo: err += 'blk_count '
+        if (linode:=(_sb.inodes_per_group-len(inode))) != d.free_inodes_count_lo: err += 'inode_count '
+        off = bgrp.bitmap_offset() + d.bg * _sb.blocks_per_group
+        if off != d.block_bitmap_lo: err += 'offset'
+        if err: Printer(err, f'  \b1 {d.bg}',f'  {d.block_bitmap_lo} {off} --  {d.free_blocks_count_lo} {ldata}  --  {d.free_inodes_count_lo} {linode}')
 
-def inode_(inode=2, *, _input, sb=1024):
-    ''' Show details of an Inode '''
-    sb = Superblock(_input, sb)
-    inode = sb.inode(inode)
-    inode.validate(sb, all=True)
+
+
+def inode_(id=2, *, _sb):
+    ''' Show details of an Inode
+    '''
+    inode = _sb.inode(id)
+    inode.validate(_sb, all=True)
     Printer().hr(f"{hex(inode.id)} #{inode.bg} {'free' if inode.is_free else ''}  nblks: {inode.block_count}")
     return inode
 
 
 
-def root_inodes(*, _input, sb=1024):
-    sb = Superblock(_input, sb)
-    for i, msg in enumerate(['Defective blocks', 'Root directory', 'User quota','Group quota','Boot loader','Undelete directory','resize','journal', 'exclude', 'replica', 'lost_found']):
-        Printer().hr(f"{i+1} {msg}")
-        inode = sb.inode(i+1)
+def root_inodes(*, _sb):
+    ''' Show the first 11 inodes
+    '''
+    for id, msg in enumerate(['Defective blocks', 'Root directory', 'User quota','Group quota','Boot loader','Undelete directory','resize','journal', 'exclude', 'replica', 'lost_found']):
+        inode = _sb.inode(id+1)
+        inode.validate(_sb, all=True)
+        Printer().hr(f"{hex(inode.id)} \b2 {msg}\b  nblks: {inode.block_count}")
         Printer().pretty(inode)
 
 
 
-def inode_data(inode=2, *, _input, sb=1024):
-    sb = Superblock(_input, sb)
-    inode = inode_(inode, _input=_input, sb=sb.offset)
-    for blkid in inode:
-        errs, data = sb.blk_data(blkid)
-        Printer().hr(blkid,'  ', pretty_num(blkid*sb.block_size))
-        if errs: Printer().card('Errors\t', *[f'* {e}\n' for e in errs])
-        offset = 0
-        while offset < sb.block_size:
-            Printer(Line(data[offset:offset+256]))
-            offset += 256
+def blk_data(blkid=0, *, _sb):
+    ''' Show raw data of a block
+
+    Parameters:
+        <blkid>
+            The block ID to show
+    '''
+    bgrp = _sb.blkgrp(blkid // _sb.blocks_per_group)
+    Printer().hr(f"#{blkid}  bg:{bgrp.bg}", " @ ", pretty_num(blkid*_sb.block_size),  '  free' if bgrp.blkidx_free(blkid % _sb.blocks_per_group) else '  in use')
+    data = read(_sb.stream, blkid*_sb.block_size, _sb.block_size)
+    i = 0
+    while i < _sb.block_size:
+        l = Line()
+        ascii = ''
+        while i < _sb.block_size:
+            word = ''
+            while i < _sb.block_size:
+                b = data[i]
+                word += f"{b:02x}"
+                ascii += chr(b) if b > 32 and b < 128 else ' '
+                i += 1
+                if i%2 == 0: break
+            l(' \bdem$' if word == '0'*len(word) else ' ', word)
+            if i%32 == 0: break
+        Printer(l, '  ', '\bdem |', ascii, '\bdem |')
+    
 
 
+def ls(root_inode=2, *, _sb, depth__d=0, keep_going__k=False):
+    ''' Show a directory listing from an inode
 
-
-def ls(root_inode=2, *, _input, sb=1024, depth__d=0, continue__c=False):
+    Parameters:
+        <inode>
+            The inode directory to traverse
+        --depth <int>, -d <int> | default=0
+            How many layers deep to show
+        --keep_going, -k
+            Continue even if errors are encountered, otherwise stop on the first error 
+    '''
     nerrors = 0
     def _error(*args, **kwargs):
         nonlocal nerrors
@@ -111,11 +168,11 @@ def ls(root_inode=2, *, _input, sb=1024, depth__d=0, continue__c=False):
         nerrors+=1
         if not continue__c: raise PrettyException(msg='error encountered')
         
-    def branch(sb, parent_id, inode, depth=0):
-        inode.validate(sb, all=True)
+    def branch(parent_id, inode, depth=0):
+        inode.validate(_sb, all=True)
         if inode._errors: _error(f"inode {hex(inode.id)} Errors\t", *[f"* {e}\n" for e in inode._errors])
         for blkid in inode:
-            d = DirectoryBlk(sb, blkid)
+            d = DirectoryBlk(_sb, blkid)
             d.validate(all=True, nonameok=True)
             Printer(f'#{blkid}', style='dem')
             if d._errors: _error(f"blk #{blkid} Errors\t", *[f"* {e}\n" for e in d._errors])
@@ -125,31 +182,33 @@ def ls(root_inode=2, *, _input, sb=1024, depth__d=0, continue__c=False):
                     if e.inode != inode.id: _error(f". Error\t* self inode mismatch {hex(e.inode)} != {hex(inode.id)}")
                     continue
                 if e.name == b'..':
-                    if parent_id !='unk' and e.inode != parent_id:
+                    if parent_id != None and e.inode != parent_id:
                         _error(f".. Error\t* parent inode mismatch {hex(e.inode)} != {hex(parent_id)}")
                     continue
                 try:
                     if e.name in b'..': raise ValueError()
-                    child = sb.inode(e.inode)
+                    child = _sb.inode(e.inode)
                 except ValueError:
                     Printer('  '*depth, f'\b! {e.name_utf8}', f'  \b1 {hex(e.inode)}',)
                     continue
                 Printer('  '*depth, f'\b! {e.name_utf8}', f'  \b1 {hex(e.inode)}', '  ', child.pretty_val('mode'))
                 if child.ftype != child.S_IFDIR: continue
                 if depth+1 == depth__d: continue
-                branch(sb, inode.id, child, depth+1)
+                branch(inode.id, child, depth+1)
         return inode
 
-    sb = Superblock(_input, sb)
-    branch(sb, 'unk', sb.inode(root_inode))
+    branch(None, _sb.inode(root_inode))
     Printer(f"{nerrors} Errors", style='err' if nerrors else 'g')
     
 
 
+def find_blk_dirs(fname='local/scan_dir.pickle', *, _sb):
+    ''' Search every block for blocks that look like directory entries
 
-def scan_dir(*, _input, sb=1024, fname='local/scan_dir.pickle'):
-    ''' Search every block for blocks that look like directory entries '''
-    sb = Superblock(_input, sb)
+    Parameters:
+        <filename>  | default='local/scan_dir.pickle'
+            Where to save the data
+    '''
     def save(data):
         with open(fname, 'wb') as f:
             pickle.dump(data, f)
@@ -159,22 +218,27 @@ def scan_dir(*, _input, sb=1024, fname='local/scan_dir.pickle'):
     except:
         bg, blkids = 0, set()
     with Printer().progress(f"from {bg}", height_max=10) as print:
-        while bg < sb.bg_count:
-            print(f'#{bg}/{sb.bg_count} {len(blkids)}', tag={'progress':(bg, sb.bg_count)})
-            for blkid in sb.blkgrp(bg).each_data_blkid():
-                dirs = sb.dirs(blkid)
-                if not dirs: continue
+        while bg < _sb.bg_count:
+            print(f'#{bg}/{_sb.bg_count} {len(blkids)}', tag={'progress':(bg, _sb.bg_count)})
+            for blkid in _sb.blkgrp(bg).each_data_blkid():
+                d = DirectoryBlk(_sb, blkid)
+                d.validate(all=True)
+                if d._errors: continue # FIXME: more lax
                 blkids.add(blkid)
-                print(f'#{bg}.{blkid}  {len(blkids)}', tag={'progress':(bg, sb.bg_count)})
+                print(f'#{bg}.{blkid}  {len(blkids)}', tag={'progress':(bg, _sb.bg_count)})
             save((bg, blkids))
             bg += 1
     Printer(f"Done: {len(blkids)}")
 
 
 
-def scan_inodes(*, _input, sb=1024, fname='local/scan_inodes.pickle'):
-    ''' Scan every inode for inodes that are directories '''
-    sb = Superblock(_input, sb)
+def find_inode_dirs(fname='local/scan_inodes.pickle', *, _sb):
+    ''' Scan every inode for inodes that are directories
+    
+    Parameters:
+        <filename>  | default='local/scan_inodes.pickle'
+            Where to save the data
+    '''
     def save(data):
         with open(fname, 'wb') as f:
             pickle.dump(data, f)
@@ -183,15 +247,14 @@ def scan_inodes(*, _input, sb=1024, fname='local/scan_inodes.pickle'):
             idstart, ids = pickle.load(f)
     except:
         idstart, ids = 1, {}
-    total = sb.inodes_per_group*sb.bg_count
     with Printer().progress(f"from {idstart}", height_max=10) as print:
-        for id in range(idstart, total):
+        for id in range(idstart, _sb.inode_count):
             if id%(1024*2) == 0:
-                print(f"{id} / {total} {id*100/total:.1f}%   {len(ids)} {len(ids[tuple()])}", tag={'progress':(id, total)})
+                print(f"{id} / {_sb.inode_count} {id*100/_sb.inode_count:.1f}%   {len(ids)} {len(ids[tuple()])}", tag={'progress':(id, _sb.inode_count)})
                 save((id, ids))
-            inode = sb.inode(id)
+            inode = _sb.inode(id)
             if inode.ftype != 0x4000: continue
-            inode.validate(sb)
+            inode.validate(_sb)
             eset = set()
             for e in inode._errors:
                 if 'free' in e: eset.add('free')
@@ -199,66 +262,11 @@ def scan_inodes(*, _input, sb=1024, fname='local/scan_inodes.pickle'):
             eset = tuple(sorted(eset))
             ids.setdefault(eset, set())
             ids[eset].add(inode.id)
-            
     save((id, ids))
     for k,v in ids.items():
         Printer(f"{len(v)} : {k}")
-    #print(ids)
+    Printer(f"Done: ", len(ids))
 
-
-
-def prune_dir(*, _input, sb=1024, show__s=None, fixup=False, fin='local/scan_dir.pickle', fname='local/pruned.pickle'):
-    sb = Superblock(_input, sb)
-
-    with open(fin, 'rb') as f:
-        blkid, blkids = pickle.load(f)
-    try:
-        with open(fname, 'rb') as f:
-            errs = pickle.load(f)
-    except:
-        errs = {}
-        with Printer().progress('go', height_max=10) as print:
-            for i, blkid in enumerate(blkids):
-                if i%(1024) == 0:
-                    print(f'#{i}/{len(blkids)}', tag={'progress':(i, len(blkids))})
-                dblk = DirectoryBlk(sb, blkid)
-                dblk.validate()
-                errstr = '--'.join(sorted(dblk._errors))
-                errs.setdefault(errstr, set())
-                errs[errstr].add(blkid)
-        with open(fname, 'wb') as f:
-            pickle.dump(errs, f)
-
-    if fixup:
-        ers2 = {'': errs['']}
-        for estr, vals in errs.items():
-            if not estr: continue
-            eset = set()
-            for err in estr.split('--'):
-                if 'Invalid value' in err: eset.add('val')
-                elif 'longer' in err: eset.add('long')
-                elif 'rec_len' in err: eset.add('rlen')
-                elif 'name chars' in err: eset.add('chars')
-                elif 'No name' in err: eset.add('noname')
-                elif 'is free' in err: eset.add('free')
-            eset = tuple(sorted(eset))
-            ers2.setdefault(eset, set())
-            ers2[eset].update(vals)
-
-        with open(fname, 'wb') as f:
-            pickle.dump(ers2, f)
-
-
-    if show__s == None:
-        for errstr, blkids in errs.items():
-            Printer(len(blkids), ' : ', errstr)
-        Printer(len(errs), ' kinds')
-    else:
-        for blkid in errs[show__s]:
-            dblk = DirectoryBlk(sb, blkid)
-            dblk.validate()
-            names = ' '.join(f'{e.name_utf8!r}{hex(e.inode)}' for e in dblk.entries)
-            Printer(blkid, ' : ', names)
 
 
 def dotfiles(*,_input, sb=1024, fdblks='local/pruned.pickle', fpc='local/parent_child.pickle'):
@@ -310,21 +318,20 @@ def rootfiles(*, _input, sb=1024, fpc='local/parent_child.pickle'):
     
 
 
-
-def dblk(blkid:int, *, _input, sb=1024):
-    ''' Show the contents of a directory block '''
-    sb = Superblock(_input, sb)
+def dblk(blkid:int, *, _sb):
+    ''' Show the contents of a directory block
+    '''
     Printer().hr(blkid)
-    d = DirectoryBlk(sb, blkid)
-    d.validate(all=True, nonameok=True)
+    d = DirectoryBlk(_sb, blkid)
+    d.validate(all=True)
     if d._errors: Printer().card(f"Errors\t", *[f"* {e}\n" for e in d._errors], style='err')
     for e in d.entries:
         try:
-            inode = sb.inode(e.inode)
+            inode = _sb.inode(e.inode)
         except:
             inode = None
         if inode:
-            inode.validate(sb)
+            inode.validate(_sb)
             istr = f'\berr {len(inode._errors)} Errors' if inode._errors else f"{inode.pretty_val('mode')}"
             if inode.is_free: istr +=' free'
         else:
@@ -333,8 +340,7 @@ def dblk(blkid:int, *, _input, sb=1024):
 
 
 
-
-def www(*,_input, sb=1024, fdblks='local/pruned.pickle', fpc='local/www.pickle'):
+def www(*, _sb, fdblks='local/pruned.pickle', fpc='local/www.pickle'):
     sb = Superblock(_input, sb)
     with open(fdblks, 'rb') as f:
         dblks = pickle.load(f)
@@ -362,15 +368,15 @@ def www(*,_input, sb=1024, fdblks='local/pruned.pickle', fpc='local/www.pickle')
 
 
 
-@CLI.sub_cmds(grep, superblocks, descriptors, bgrp, check_desc, root_inodes, inode_, ls, scan_dir, dblk, prune_dir, scan_inodes, dotfiles, rootfiles, www)
-def main(*, fname__f=None):
+@CLI.sub_cmds(grep, superblocks, descriptors, blkgrp, check_desc, root_inodes, inode_, blk_data, ls, find_blk_dirs, dblk, find_inode_dirs, dotfiles, rootfiles, www)
+def main(*, sb=1024, write__w=False, fname__f=None):
     grep_groups({
         'e2fs': [('py', 'e2fs', '*/__pycache__/*')],
         'pyutil': [('py', 'pyutil', '*/__pycache__/*')],
     })
 
     if fname__f:
-        with open(fname__f, 'rb') as f:
-            yield f
+        with open(fname__f, 'asdf' if write__w else 'rb') as f:
+            yield dict(_sb=Superblock(f, sb))
     else:
         yield None
