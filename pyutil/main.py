@@ -166,14 +166,14 @@ def ls(root_inode=2, *, _sb, depth__d=0, keep_going__k=False):
         kwargs.setdefault('style','err')
         Printer().card(*args, **kwargs)
         nerrors+=1
-        if not continue__c: raise PrettyException(msg='error encountered')
+        if not keep_going__k: raise PrettyException(msg='error encountered')
         
     def branch(parent_id, inode, depth=0):
         inode.validate(_sb, all=True)
         if inode._errors: _error(f"inode {hex(inode.id)} Errors\t", *[f"* {e}\n" for e in inode._errors])
         for blkid in inode:
             d = DirectoryBlk(_sb, blkid)
-            d.validate(all=True, nonameok=True)
+            d.validate(all=True)
             Printer(f'#{blkid}', style='dem')
             if d._errors: _error(f"blk #{blkid} Errors\t", *[f"* {e}\n" for e in d._errors])
             for e in d.entries:
