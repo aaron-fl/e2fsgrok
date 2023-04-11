@@ -35,9 +35,7 @@ class DirectoryBlk():
         self.blkid = blkid
         self.entries = []
         self._errors = []
-        self.parent_inode = None
         self.inode = None
-        self.siblings = (None, None)
         
 
     def validate(self, **kwargs):
@@ -68,7 +66,7 @@ class EntryIter():
         self.sb = dblk.sb
         self.offset = dblk.blkid * self.sb.block_size
         self.next_blk = (dblk.blkid+1)*self.sb.block_size
-        
+
 
     def __next__(self):
         if self.offset >= self.next_blk: raise StopIteration()

@@ -1,4 +1,4 @@
-import struct, functools
+import io, struct, functools
 from print_ext import PrettyException
 from .struct import pretty_num
 
@@ -46,6 +46,16 @@ class Bitmap():
         return struct.unpack_from('B', data)[0]
 
 
+    def __setitem__(self, idx, b):
+        byte = self.byte(idx//8)
+        self.stream.seek(-1, io.SEEK_CUR)
+        if b:
+            byte |= 1<<idx%8
+        else:
+            byte &= ~(1<<idx%8)
+        self.stream.write(bytes([byte]))
+
+
     def __iter__(self):
         return BitmapIter(self)
 
@@ -58,5 +68,38 @@ class Bitmap():
         return sum
 
 
+    def num_entries(self):
+        return self.size * 8
+
+
     def __getitem__(self, idx):
         return bool(self.byte(idx//8) & (1<<idx%8))
+
+
+
+class BitmapMem(Bitmap):
+    def __init__(self, buffer, **kwargs):
+        super().__init__(buffer, 0, len(buffer), **kwargs)
+
+
+    def byte(self, i):
+        return self.stream[i]
+
+
+    def __setitem__(self, idx, b):
+        byte = self.byte(idx//8)
+        if b:
+            byte |= 1<<idx%8
+        else:
+            byte &= ~(1<<idx%8)
+        self.stream[idx//8] = byte
+
+
+    def invert(self):
+        for i in range(self.size):
+            self.stream[i] = ~self.stream[i]
+
+
+    def __repr__(self):
+        return f"{len(self)} / {self.num_entries()}  " + ''.join('1' if self[i] else '.' for i in range(self.num_entries()))
+

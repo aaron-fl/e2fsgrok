@@ -102,12 +102,13 @@ dfn = [
 
 
 class BlkIterator():
-    def __init__(self, inode):
+    def __init__(self, inode, zero_ok=True):
         self.sb = inode.sb
         self.inode = inode
         self.idx = 0
         self.maxi = inode.block_count
         self.id0_max = 12 + self.sb.block_size // 4
+        self.zero_ok = zero_ok
 
     def __iter__(self):
         return self
@@ -122,10 +123,9 @@ class BlkIterator():
                 offset = self.inode.block[12] * self.sb.block_size + 4*(idx-12)
                 blkid = struct.unpack_from('<I', read(self.inode.stream, offset, 4))[0]
             else:
-                print(f'!!!! {self.maxi} !!!')
-                raise NotImplemented()
-            if blkid == 0: continue
-            return blkid
+                raise ValueError(f"Not implemented past {self.maxi}")
+            if not self.sb.valid_blkid(blkid, self.zero_ok): raise ValueError(f"Invalid blkid {blkid}")
+            if blkid: return blkid
         if self.idx == self.maxi: raise StopIteration()
 
 
@@ -189,6 +189,10 @@ class INode(Struct):
         return BlkIterator(self)
 
 
+    def each_block(self, **kwargs):
+        return BlkIterator(self, **kwargs)
+
+
     def each_line(self, line_size, nl=True, size=-1):
         if size < 0: size = self.size_lo
         data = bytearray()
@@ -217,9 +221,9 @@ class INode(Struct):
 
 
 
-    def validate(self, sb, all=False):
-        if sb.inode_free(self.id):
-            self._errors.append('free')
+    def validate(self, all=False):
+        #if self.sb.inode_free(self.id):
+        #    self._errors.append('free')
         super().validate(all=all)
         return self._errors
 

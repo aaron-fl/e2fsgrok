@@ -305,6 +305,15 @@ class Superblock(Struct):
         return self.__inode_count
 
 
+    def valid_blkid(self, blkid, zero_ok=False):
+        if blkid < 0: return False
+        if blkid >= self.blocks_count_lo: return False
+        if blkid == 0: return zero_ok
+        bgrp = self.blkgrp(blkid//self.blocks_per_group)
+        if blkid < bgrp.inode_table_blkid() + bgrp.inode_block_count: return False
+        return True
+
+
     def inode(self, id, **kwargs):
         if id < 1 or id >= self.inode_count: raise ValueError(f"inode out of range (1, {self.inode_count})  {id}")
         return self.blkgrp((id - 1) // self.inodes_per_group, **kwargs).inode_idx(id)
