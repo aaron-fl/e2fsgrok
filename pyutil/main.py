@@ -1,7 +1,7 @@
 import yaclipy as CLI
-import pickle, struct, re, hashlib
+import pickle, struct, re, hashlib, sys
 from math import ceil
-from print_ext import Printer, PrettyException, Line
+from print_ext import Printer, PrettyException, Line, Bdr
 from e2fs import Superblock, Bitmap
 from e2fs.struct import pretty_num, read
 from e2fs.directory import DirectoryBlk
@@ -502,7 +502,31 @@ def cp(inode:int, dest, *, _sb):
             f.write(data)
 
 
-@CLI.sub_cmds(grep, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, find_blk_dirs, blkls, find_inode_dirs, dotfiles, rootfiles, search, change_blkcount, isearch, cp)
+def cat(inode:int, *, _sb, binary__b=False, encoding='utf8'):
+    ''' Show the contents inode's data blocks
+    '''
+    inode = _sb.inode(inode)
+    Printer(repr(inode))
+    for data in inode.each_line(32 if binary__b else 4096, not binary__b):
+        if not binary__b:
+            sys.stdout.buffer.write(data)
+            continue
+        line = Line()
+        ascii = ''
+        for i,b in enumerate(data):
+            is_ascii = (b >32 and b < 127)
+            if i and i%4==0: line(' ')
+            if i and i%2==0: line(' ')
+            line(f"{b:02x}", style='dem' if b==0 else 'y' if is_ascii else '')
+            
+            ascii += chr(b) if is_ascii else ' '
+        Printer(line, f"\bdem {Bdr.codes['- - ']}", ascii, f"\bdem {Bdr.codes['- - ']}")
+
+
+
+
+
+@CLI.sub_cmds(grep, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, find_blk_dirs, blkls, find_inode_dirs, dotfiles, rootfiles, search, change_blkcount, isearch, cp, cat)
 def main(*, sb=1024, write__w=False, fname__f=None):
     grep_groups({
         'e2fs': [('py', 'e2fs', '*/__pycache__/*')],

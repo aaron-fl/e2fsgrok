@@ -189,6 +189,34 @@ class INode(Struct):
         return BlkIterator(self)
 
 
+    def each_line(self, line_size, nl=True, size=None):
+        if size == None: size = self.size_lo
+        data = bytearray()
+        blkids = iter(self)
+        while True:
+            idx = -1
+            try:
+                if not nl: raise ValueError()
+                idx = data.index(10)+1
+            except ValueError:
+                if len(data) > line_size:
+                    idx = line_size
+            if idx < 0: # Try to read another block
+                try:
+                    if not (read_size:=min(size, self.sb.block_size)): raise StopIteration()
+                    blkid = next(blkids)
+                except StopIteration:
+                    if data: yield data
+                    return
+                data.extend(read(self.stream, blkid*self.sb.block_size, read_size))                
+            else:
+                size -= len(data[:idx])
+                yield data[:idx]
+                data[:idx] = []
+
+
+
+
     def validate(self, sb, all=False):
         if sb.inode_free(self.id):
             self._errors.append('free')
