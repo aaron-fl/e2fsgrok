@@ -189,8 +189,8 @@ class INode(Struct):
         return BlkIterator(self)
 
 
-    def each_line(self, line_size, nl=True, size=None):
-        if size == None: size = self.size_lo
+    def each_line(self, line_size, nl=True, size=-1):
+        if size < 0: size = self.size_lo
         data = bytearray()
         blkids = iter(self)
         while True:

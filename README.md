@@ -116,3 +116,15 @@ Let's just hard-link it to  0x3d781ae
 Possible var
         0x1a8001  57979448  Abandoned lost and found
   0x3d78201 1744896
+
+
+# VirtualBox
+
+
+There seem to be some different images :
+    /root/ダウンロード
+
+These have been deleted:
+    <MachineEntry uuid="{e2893f6a-b30c-49be-b175-6727ad870197}" src="/root/VirtualBox VMs/Teria/Teria.vbox"/>
+    <MachineEntry uuid="{7c78daf9-1e16-4d7f-9cbc-52d09fee4232}" src="/root/VirtualBox VMs/Dacs/Dacs.vbox"/>
+

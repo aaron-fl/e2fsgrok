@@ -37,7 +37,7 @@ def name_or_inode(name, inode=None, *, _sb=None):
         if d._errors: raise PrettyException(msg=Text(f"blk #{blkid} Errors\t{full_path}\n",*[f"* {e}\n" for e in d._errors]))
         for e in d.entries:
             if e.name_utf8.lower() == name.lower(): return e.inode
-    return 0
+    raise PrettyException(msg=Text(f'\b1 {name}\b : No such file or directory'))
 
 
 
@@ -159,7 +159,7 @@ def blk_data(blkid=0, *, _sb):
     
 
 
-def ls(root_inode=0, *, _sb, depth__d=0, keep_going__k=False, parent__p:int=None):
+def ls(root_inode=0, *, _sb, depth__d=1, keep_going__k=False, parent__p:int=None):
     ''' Show a directory listing from an inode
 
     Parameters:
@@ -207,13 +207,14 @@ def ls(root_inode=0, *, _sb, depth__d=0, keep_going__k=False, parent__p:int=None
                 except ValueError:
                     child = None
                 if child == None:
-                    Printer('  '*depth, f'\b! {e.name_utf8}', f'  \b1 {hex(e.inode)}',)
+                    Printer('  '*depth, f'\br {e.name_utf8}', f'  \b1 {hex(e.inode)}',)
                     continue
                 child.validate(_sb, all=True)
-                tail = f'\berr {len(child._errors)} Errors' if child._errors else child.pretty_val('mode')
-                Printer('  '*depth, f'\b! {e.name_utf8}', f'  \b1 {hex(e.inode)}', '  ', tail)
+                isdir = child.ftype == child.S_IFDIR
+                tail = f'\berr {len(child._errors)} Errors' if child._errors else Line(child.pretty_val('mode'), '  \b3$', pretty_num(child.size_lo))
+                Printer('  '*depth, f"\b{'2' if isdir else '!'} {e.name_utf8}", f'  \b1 {hex(e.inode)}', '  ', tail)
                 if child._errors: _error(f"inode {hex(child.id)} Errors\t{path}\n", *[f"* {e}\n" for e in child._errors])
-                if child.ftype != child.S_IFDIR: continue
+                if isdir: continue
                 if depth+1 == depth__d: continue
                 branch(inode.id, child, depth+1, path)
         return inode
@@ -355,11 +356,17 @@ def blkls(blkid:int, *, _sb):
             inode = None
         if inode:
             inode.validate(_sb)
-            istr = f'\berr {len(inode._errors)} Errors' if inode._errors else f"{inode.pretty_val('mode')}"
-            if inode.is_free: istr +=' free'
+            tail = Line()
+            if inode._errors:
+                tail(f'\berr {len(inode._errors)} Errors')
+            else:
+                tail(inode.pretty_val('mode'), '  \b3$', pretty_num(inode.size_lo))
+            if inode.is_free: tail('  \berr free')
+            style = '2' if inode.ftype == inode.S_IFDIR else '!'
         else:
-            istr = '\berr Invalid inode ID'
-        Printer(f"\b! {e.name_utf8} \b \b1 {hex(e.inode)}\b  {istr}")
+            tail = '\berr Invalid inode ID'
+            style = 'err'
+        Printer(f"\b{style} {e.name_utf8} \b \b1 {hex(e.inode)}  ", tail)
 
 
 
@@ -535,12 +542,12 @@ def cp(inode, dest, *, _sb):
 
 
 
-def cat(inode, *, _sb, binary__b=False, encoding='utf8'):
+def cat(inode, *, _sb, binary__b=False, encoding='utf8', size__s=-1):
     ''' Show the contents inode's data blocks
     '''
     inode = _sb.inode(name_or_inode(inode, _sb=_sb))
     Printer(repr(inode))
-    for data in inode.each_line(32 if binary__b else 4096, not binary__b):
+    for data in inode.each_line(32 if binary__b else 4096, not binary__b, size=size__s):
         if not binary__b:
             sys.stdout.buffer.write(data)
             continue
@@ -558,13 +565,9 @@ def cat(inode, *, _sb, binary__b=False, encoding='utf8'):
 
 
 def cd(name='', inode=0, *, _sb):
-    ''' Show the contents inode's data blocks
+    ''' Change working directory to a name or inode number
     '''
-    if inode or not name:
-        return cur_path(inode or 2, name)
-    inode = name_or_inode(name, _sb=_sb)
-    if not inode: raise PrettyException(msg=Text(f'\b1 {name}\b : No such file or directory'))
-    return cur_path(inode, name)
+    return cur_path(inode or name_or_inode(name or 2, _sb=_sb), name)
 
 
 
