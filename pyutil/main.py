@@ -1,5 +1,5 @@
 import yaclipy as CLI
-import pickle, struct, re, hashlib, sys, os
+import pickle, struct, re, hashlib, sys, os, shlex
 from math import ceil
 from print_ext import Printer, PrettyException, Line, Bdr, Text
 from e2fs import Superblock, Bitmap
@@ -8,7 +8,7 @@ from e2fs.directory import DirectoryBlk
 from yaclipy_tools.commands import grep, grep_groups
 from yaclipy.arg_spec import coerce_int
 
-def cur_path(*set):
+def cur_inode(set=None):
     if set:
         with open('local/curpath.pickle', 'wb') as f:
             pickle.dump(set, f)
@@ -16,20 +16,39 @@ def cur_path(*set):
         with open('local/curpath.pickle', 'rb') as f:
             return pickle.load(f)
     except:
-        return tuple()
+        return 2
 
 
+def parent_inode(inode, sb):
+    for blkid in sb.inode(inode):
+        for e in DirectoryBlk(sb, blkid):
+            if e.name == b'..':
+                return e.inode
+    return 0
 
-def cur_inode():
-    return cur_path()[0]
+
+def name_for_inode(parent, inode, sb):
+    for blkid in sb.inode(parent):
+        for e in DirectoryBlk(sb, blkid):
+            if e.name == b'.': continue
+            if e.inode == inode: return e.name_utf8
+    return None
+    
+
+def cur_path(sb):
+    inode = cur_inode()
+    s = ''
+    while True:
+        parent = parent_inode(inode, sb)
+        name = name_for_inode(parent, inode, sb)
+        if inode == 2 or name == None:
+            return f'{hex(inode)}{s}'
+        s = f'/{name}{s}'
+        inode = parent
 
 
 
 def name_or_inode(name, inode=None, *, _sb=None):
-    try:
-        return coerce_int(name)
-    except:
-        pass
     if not isinstance(inode, Struct): inode = _sb.inode(inode or cur_inode())
     for blkid in inode:
         d = DirectoryBlk(inode.sb, blkid)
@@ -37,7 +56,10 @@ def name_or_inode(name, inode=None, *, _sb=None):
         if d._errors: raise PrettyException(msg=Text(f"blk #{blkid} Errors\t{full_path}\n",*[f"* {e}\n" for e in d._errors]))
         for e in d.entries:
             if e.name_utf8.lower() == name.lower(): return e.inode
-    raise PrettyException(msg=Text(f'\b1 {name}\b : No such file or directory'))
+    try:
+        return coerce_int(name)
+    except:
+        raise PrettyException(msg=Text(f'\b1 {name}\b : No such file or directory'))
 
 
 
@@ -564,14 +586,32 @@ def cat(inode, *, _sb, binary__b=False, encoding='utf8', size__s=-1):
 
 
 
-def cd(name='', inode=0, *, _sb):
+def cd(name, *, _sb):
     ''' Change working directory to a name or inode number
     '''
-    return cur_path(inode or name_or_inode(name or 2, _sb=_sb), name)
+    cur_inode(name_or_inode(name or 2, _sb=_sb))
 
 
 
-@CLI.sub_cmds(grep, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, find_blk_dirs, blkls, find_inode_dirs, dotfiles, rootfiles, search, change_blkcount, isearch, cp,cd, cat)
+async def shell(*, _sb):
+    while True:
+        sys.stdout.write(cur_path(_sb) + ' $ ')
+        sys.stdout.flush()
+        cmd = sys.stdin.readline()
+        if not cmd: break
+        try:
+            cmd = CLI.Command(main)(shlex.split(cmd))
+            cmd = cmd.next_cmd
+        except PrettyException as e:
+            Printer().pretty(e)
+            continue
+        await cmd.run(dict(_sb=_sb))
+        
+    print('bye')
+
+
+
+@CLI.sub_cmds(grep, shell, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, find_blk_dirs, blkls, find_inode_dirs, dotfiles, rootfiles, search, change_blkcount, isearch, cp,cd, cat)
 def main(*, sb=1024, write__w=False, fname__f=None):
     grep_groups({
         'e2fs': [('py', 'e2fs', '*/__pycache__/*')],
