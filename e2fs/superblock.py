@@ -326,4 +326,3 @@ class Superblock(Struct):
 
     def inode_free(self, id, **kwargs):
         return not self.blkgrp((id - 1) // self.inodes_per_group, **kwargs).inode_bitmap()[(id-1)%self.inodes_per_group]
-    

@@ -1,11 +1,44 @@
 import yaclipy as CLI
-import pickle, struct, re, hashlib, sys
+import pickle, struct, re, hashlib, sys, os
 from math import ceil
-from print_ext import Printer, PrettyException, Line, Bdr
+from print_ext import Printer, PrettyException, Line, Bdr, Text
 from e2fs import Superblock, Bitmap
-from e2fs.struct import pretty_num, read
+from e2fs.struct import pretty_num, read, Struct
 from e2fs.directory import DirectoryBlk
 from yaclipy_tools.commands import grep, grep_groups
+from yaclipy.arg_spec import coerce_int
+
+def cur_path(*set):
+    if set:
+        with open('local/curpath.pickle', 'wb') as f:
+            pickle.dump(set, f)
+    try:
+        with open('local/curpath.pickle', 'rb') as f:
+            return pickle.load(f)
+    except:
+        return tuple()
+
+
+
+def cur_inode():
+    return cur_path()[0]
+
+
+
+def name_or_inode(name, inode=None, *, _sb=None):
+    try:
+        return coerce_int(name)
+    except:
+        pass
+    if not isinstance(inode, Struct): inode = _sb.inode(inode or cur_inode())
+    for blkid in inode:
+        d = DirectoryBlk(inode.sb, blkid)
+        d.validate(all=True)
+        if d._errors: raise PrettyException(msg=Text(f"blk #{blkid} Errors\t{full_path}\n",*[f"* {e}\n" for e in d._errors]))
+        for e in d.entries:
+            if e.name_utf8.lower() == name.lower(): return e.inode
+    return 0
+
 
 
 def superblocks(*, _sb, limit__l=1):
@@ -77,10 +110,10 @@ def blkgrp(bg=0, *, _sb, free__f=False):
 
 
 
-def inode_(id=2, *, _sb):
+def inode_(inode, *, _sb):
     ''' Show details of an Inode
     '''
-    inode = _sb.inode(id)
+    inode = _sb.inode(name_or_inode(inode))
     inode.validate(_sb, all=True)
     Printer().hr(f"{hex(inode.id)} #{inode.bg} {'free' if inode.is_free else ''}  nblks: {inode.block_count}")
     return inode
@@ -126,7 +159,7 @@ def blk_data(blkid=0, *, _sb):
     
 
 
-def ls(root_inode=2, *, _sb, depth__d=0, keep_going__k=False, parent__p:int=None):
+def ls(root_inode=0, *, _sb, depth__d=0, keep_going__k=False, parent__p:int=None):
     ''' Show a directory listing from an inode
 
     Parameters:
@@ -184,8 +217,7 @@ def ls(root_inode=2, *, _sb, depth__d=0, keep_going__k=False, parent__p:int=None
                 if depth+1 == depth__d: continue
                 branch(inode.id, child, depth+1, path)
         return inode
-
-    inode = _sb.inode(root_inode)
+    inode = _sb.inode(root_inode or cur_inode())
     inode.validate(_sb, all=True)
     if inode._errors: _error(f"inode {hex(inode.id)} Errors\t", *[f"* {e}\n" for e in inode._errors])
     branch(parent__p, inode)
@@ -413,7 +445,7 @@ def areyousure():
 
 
 
-def change_block(inode:int, index:int, blkid:int, *, _sb):
+def change_block(inode, index:int, blkid:int, *, _sb):
     ''' Change one of the blkids of an inode
 
     Parameters:
@@ -438,7 +470,7 @@ def change_block(inode:int, index:int, blkid:int, *, _sb):
 
 
 
-def change_blkcount(inode:int, nblks:int, *, _sb):
+def change_blkcount(nblks:int, *, _sb):
     ''' Change one of the blkids of an inode
 
     Parameters:
@@ -487,10 +519,10 @@ def change_dir_entry(blkid:int, name, inode:int, *, _sb):
 
 
 
-def cp(inode:int, dest, *, _sb):
+def cp(inode, dest, *, _sb):
     ''' Copy a file to some external destination
     '''
-    inode = _sb.inode(inode)
+    inode = _sb.inode(name_or_inode(inode))
     Printer(inode)
     if inode.ftype != inode.S_IFREG: raise PrettyException(msg=f"Bad file type {inode.pretty_val('ftype')}")
     with open(dest, 'wb') as f:
@@ -502,10 +534,11 @@ def cp(inode:int, dest, *, _sb):
             f.write(data)
 
 
-def cat(inode:int, *, _sb, binary__b=False, encoding='utf8'):
+
+def cat(inode, *, _sb, binary__b=False, encoding='utf8'):
     ''' Show the contents inode's data blocks
     '''
-    inode = _sb.inode(inode)
+    inode = _sb.inode(name_or_inode(inode, _sb=_sb))
     Printer(repr(inode))
     for data in inode.each_line(32 if binary__b else 4096, not binary__b):
         if not binary__b:
@@ -524,15 +557,24 @@ def cat(inode:int, *, _sb, binary__b=False, encoding='utf8'):
 
 
 
+def cd(name='', inode=0, *, _sb):
+    ''' Show the contents inode's data blocks
+    '''
+    if inode or not name:
+        return cur_path(inode or 2, name)
+    inode = name_or_inode(name, _sb=_sb)
+    if not inode: raise PrettyException(msg=Text(f'\b1 {name}\b : No such file or directory'))
+    return cur_path(inode, name)
 
 
-@CLI.sub_cmds(grep, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, find_blk_dirs, blkls, find_inode_dirs, dotfiles, rootfiles, search, change_blkcount, isearch, cp, cat)
+
+@CLI.sub_cmds(grep, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, find_blk_dirs, blkls, find_inode_dirs, dotfiles, rootfiles, search, change_blkcount, isearch, cp,cd, cat)
 def main(*, sb=1024, write__w=False, fname__f=None):
     grep_groups({
         'e2fs': [('py', 'e2fs', '*/__pycache__/*')],
         'pyutil': [('py', 'pyutil', '*/__pycache__/*')],
     })
-
+    if not fname__f: fname__f = os.environ.get('IMG_FILE', None)
     if fname__f:
         with open(fname__f, 'r+b' if write__w else 'rb') as f:
             yield dict(_sb=Superblock(f, sb))
