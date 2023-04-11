@@ -225,7 +225,7 @@ class INode(Struct):
 
 
     def __repr__(self):
-        return f"{hex(self.id)} {self.pretty_val('mode')} {pretty_num(self.size_lo)} bytes"
+        return f"\b1 {hex(self.id)}\b  {self.pretty_val('mode')} \b3 {pretty_num(self.size_lo)} bytes"
 
 
 

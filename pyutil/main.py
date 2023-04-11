@@ -1,5 +1,5 @@
 import yaclipy as CLI
-import pickle, struct, re, hashlib, sys, os, shlex
+import pickle, struct, re, hashlib, sys, os, shlex, traceback
 from math import ceil
 from print_ext import Printer, PrettyException, Line, Bdr, Text
 from e2fs import Superblock, Bitmap
@@ -48,7 +48,7 @@ def cur_path(sb):
 
 
 
-def name_or_inode(name, inode=None, *, _sb=None):
+def name_or_inode(name, inode=None,*, _sb=None):
     if not isinstance(inode, Struct): inode = _sb.inode(inode or cur_inode())
     for blkid in inode:
         d = DirectoryBlk(inode.sb, blkid)
@@ -135,7 +135,7 @@ def blkgrp(bg=0, *, _sb, free__f=False):
 def inode_(inode, *, _sb):
     ''' Show details of an Inode
     '''
-    inode = _sb.inode(name_or_inode(inode))
+    inode = _sb.inode(name_or_inode(inode, _sb=_sb))
     inode.validate(_sb, all=True)
     Printer().hr(f"{hex(inode.id)} #{inode.bg} {'free' if inode.is_free else ''}  nblks: {inode.block_count}")
     return inode
@@ -551,7 +551,7 @@ def change_dir_entry(blkid:int, name, inode:int, *, _sb):
 def cp(inode, dest, *, _sb):
     ''' Copy a file to some external destination
     '''
-    inode = _sb.inode(name_or_inode(inode))
+    inode = _sb.inode(name_or_inode(inode, _sb=_sb))
     Printer(inode)
     if inode.ftype != inode.S_IFREG: raise PrettyException(msg=f"Bad file type {inode.pretty_val('ftype')}")
     with open(dest, 'wb') as f:
@@ -568,7 +568,7 @@ def cat(inode, *, _sb, binary__b=False, encoding='utf8', size__s=-1):
     ''' Show the contents inode's data blocks
     '''
     inode = _sb.inode(name_or_inode(inode, _sb=_sb))
-    Printer(repr(inode))
+    Printer().hr(repr(inode), border_style='dem')
     for data in inode.each_line(32 if binary__b else 4096, not binary__b, size=size__s):
         if not binary__b:
             sys.stdout.buffer.write(data)
@@ -594,20 +594,25 @@ def cd(name, *, _sb):
 
 
 async def shell(*, _sb):
+    from print_ext.printer import printer_for_stream
+    direct = printer_for_stream(end='')
     while True:
-        sys.stdout.write(cur_path(_sb) + ' $ ')
-        sys.stdout.flush()
+        #direct(f'\bg!, {hex(cur_inode())} \bb {cur_path(_sb)} $')
+        #direct.stream.write(' ')
+        #direct.stream.flush()
+        c = sys.stdin.read(1)
+        print(hex(c))
+        continue
         cmd = sys.stdin.readline()
         if not cmd: break
         try:
             cmd = CLI.Command(main)(shlex.split(cmd))
-            cmd = cmd.next_cmd
+            await cmd.next_cmd.run(dict(_sb=_sb))
         except PrettyException as e:
             Printer().pretty(e)
-            continue
-        await cmd.run(dict(_sb=_sb))
-        
-    print('bye')
+        except Exception as e:
+            traceback.print_exc()
+    print('Goodbye')
 
 
 
@@ -617,9 +622,10 @@ def main(*, sb=1024, write__w=False, fname__f=None):
         'e2fs': [('py', 'e2fs', '*/__pycache__/*')],
         'pyutil': [('py', 'pyutil', '*/__pycache__/*')],
     })
-    if not fname__f: fname__f = os.environ.get('IMG_FILE', None)
-    if fname__f:
+    if not fname__f: fname__f = os.environ.get('IMG_FILE', '')
+    try:
         with open(fname__f, 'r+b' if write__w else 'rb') as f:
             yield dict(_sb=Superblock(f, sb))
-    else:
-        yield None
+    except FileNotFoundError:
+        raise PrettyException(msg=f"Set \b1 IMG_FILE\b  or pass the filesystem as \b1 -f\b ")
+    
