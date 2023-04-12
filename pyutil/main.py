@@ -341,6 +341,39 @@ def analyze(fname='local/analysis', *, _sb):
 
 
 
+def build_file_list(*, _sb, fname='local/file_list.txt', analysis='local/analysis'):
+    folders = set()
+    nfiles = 0
+    if os.path.exists(fname):
+        print('done')
+        return
+    with open(fname, 'w') as f:
+        with Printer().progress("0", height_max=10) as update: 
+            for bg in range(_sb.bg_count):
+                with open(analysis+f'_bg{bg}.pickle', 'rb') as fblk:
+                    blkids,_ = pickle.load(fblk)
+                    for blkid in blkids:
+                        d = DirectoryBlk(_sb, blkid)
+                        dot = [0, 0, 0]
+                        for e in d:
+                            if not e.name: continue
+                            if e.name in b'..':
+                                dot[len(e.name)] = e.inode
+                                folders.add(e.inode)
+                                continue
+                            nfiles += 1
+                            f.write(f'{blkid} {hex(dot[1])} {hex(dot[2])} {e.name_utf8}\n')
+                        # Done with this block
+                    # Close the block file
+                update.name = f"{bg*100/_sb.bg_count:.1f}%"
+                update(f"{bg} {nfiles} {len(folders)}", tag={'progress':(bg, _sb.bg_count)})
+            # Done with progress
+        # Close the fname
+    with open(f'local/known_folders.pickle', 'wb') as f:
+        pickle.dump(folders, f)
+
+
+
 def dotfiles(*,_input, sb=1024, fdblks='local/pruned.pickle', fpc='local/parent_child.pickle'):
     sb = Superblock(_input, sb)
     with open(fdblks, 'rb') as f:
@@ -656,7 +689,7 @@ def test(*,_sb):
 
 
 
-@CLI.sub_cmds(grep, shell, test, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, analyze, blkls, dotfiles, rootfiles, search, change_blkcount, isearch, cp,cd, cat)
+@CLI.sub_cmds(grep, shell, test, change_dir_entry, change_block, superblocks, descriptors, blkgrp, root_inodes, inode_, blk_data, ls, analyze, blkls, dotfiles, rootfiles, search, change_blkcount, isearch, cp,cd, cat, build_file_list)
 def main(*, sb=1024, write__w=False, fname__f=None):
     grep_groups({
         'e2fs': [('py', 'e2fs', '*/__pycache__/*')],
