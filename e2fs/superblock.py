@@ -309,6 +309,7 @@ class Superblock(Struct):
         if blkid < 0: return False
         if blkid >= self.blocks_count_lo: return False
         if blkid == 0: return zero_ok
+        return True
         bgrp = self.blkgrp(blkid//self.blocks_per_group)
         if blkid < bgrp.inode_table_blkid() + bgrp.inode_block_count: return False
         return True

@@ -123,8 +123,62 @@ Possible var
 
 There seem to be some different images :
     /root/ダウンロード
+    /var/lib/libvirt/images/Huskie.img
+    /root/ダウンロード/CentOS-7.0-1406-x86_64-NetInstall.iso
+    /var/lib/libvirt/images/Pug.img
 
 These have been deleted:
     <MachineEntry uuid="{e2893f6a-b30c-49be-b175-6727ad870197}" src="/root/VirtualBox VMs/Teria/Teria.vbox"/>
     <MachineEntry uuid="{7c78daf9-1e16-4d7f-9cbc-52d09fee4232}" src="/root/VirtualBox VMs/Dacs/Dacs.vbox"/>
 
+
+Other important places
+/var/lib/libvirt/qemu
+
+libvirt 0x3d78736  (contains storage directory)
+libvirt  0x1b0129  (contains log files)
+libvirt 0x1b0123 **JACKPOT!!!!**
+  Huskie.img  0x1b0166  frw-------,---  848M
+  Bulldog.img  0x1a28001  frwxr-xr-x,---  848M
+  Beagle.img  0x1b0119  frw-------,---  1G784M
+  Aibo.img  0x1b0143  frw-------,---  3G544M
+  Pug.img  0x1b0132  frw-------,---  3G64M
+
+
+usr/lib/virtualbox/postinst-common.sh
+
+local/images/Huskie.img1 *        63    208844    208782  102M 83 Linux
+local/images/Huskie.img2      208845 102398309 102189465 48.7G 8e Linux LVM
+
+# Bulldog
+
+This is where the DB is
+
+15028248 0x1a28001 0xe5000a 0x1b0126 Bulldog.img
+
+local/images/Bulldog.img1 *        63    208844    208782  102M 83 Linux
+local/images/Bulldog.img2      208845 102398309 102189465 48.7G 8e Linux LVM
+
+
+# Pug
+
+1777988 0x1b0132 0x1b0126 0x1b0123 Pug.img
+
+local/images/Pug.img1 *       2048  1026047  1024000  500M 83 Linux
+local/images/Pug.img2      1026048 81919999 80893952 38.6G 8e Linux LVM
+
+
+# Aibo
+
+Just swap space
+
+local/images/Aibo.img1 *       2048  1026047  1024000  500M 83 Linux
+local/images/Aibo.img2      1026048 40959999 39933952   19G 8e Linux LVM
+
+
+# Beagle
+
+Just swap space
+
+local/images/Beagle.img1 *       2048  1026047  1024000  500M 83 Linux
+local/images/Beagle.img2      1026048 20479999 19453952  9.3G 8e Linux LVM

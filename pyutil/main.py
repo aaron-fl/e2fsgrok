@@ -6,7 +6,7 @@ from e2fs import Superblock, Bitmap
 from e2fs.struct import pretty_num, read, Struct
 from e2fs.bitmap import BitmapMem
 from e2fs.directory import DirectoryBlk
-from yaclipy_tools.commands import grep, grep_groups
+from yaclipy_tools.commands import grep as project_grep, grep_groups
 from yaclipy.arg_spec import coerce_int
 
 def cur_inode(set=None):
@@ -21,7 +21,7 @@ def cur_inode(set=None):
 
 
 def parent_inode(inode, sb):
-    for blkid in sb.inode(inode).each_block(zero_ok=True):
+    for blkid in sb.inode(inode).each_block(err_ok=True):
         for e in DirectoryBlk(sb, blkid):
             if e.name == b'..':
                 return e.inode
@@ -29,7 +29,7 @@ def parent_inode(inode, sb):
 
 
 def name_for_inode(parent, inode, sb):
-    for blkid in sb.inode(parent).each_block(zero_ok=True):
+    for blkid in sb.inode(parent).each_block(err_ok=True):
         for e in DirectoryBlk(sb, blkid):
             if e.name == b'.': continue
             if e.inode == inode: return e.name_utf8
@@ -51,10 +51,10 @@ def cur_path(sb):
 
 def name_or_inode(name, inode=None,*, _sb=None):
     if not isinstance(inode, Struct): inode = _sb.inode(inode or cur_inode())
-    for blkid in inode.each_block(zero_ok=True):
+    for blkid in inode.each_block(err_ok=True):
         d = DirectoryBlk(inode.sb, blkid)
         d.validate(all=True)
-        if d._errors: raise PrettyException(msg=Text(f"blk #{blkid} Errors\t{full_path}\n",*[f"* {e}\n" for e in d._errors]))
+        if d._errors: raise PrettyException(msg=Text(f"blk #{blkid} Errors\t",*[f"* {e}\n" for e in d._errors]))
         for e in d.entries:
             if e.name_utf8.lower() == name.lower(): return e.inode
     try:
@@ -133,12 +133,19 @@ def blkgrp(bg=0, *, _sb, free__f=False):
 
 
 
-def inode_(inode, *, _sb):
+def inode_(inode, *, _sb, blocks__b=False):
     ''' Show details of an Inode
     '''
     inode = _sb.inode(name_or_inode(inode, _sb=_sb))
     inode.validate(all=True)
     Printer().hr(f"{hex(inode.id)} #{inode.bg} {'free' if inode.is_free else ''}  nblks: {inode.block_count}")
+    if inode.ftype in {inode.S_IFDIR, inode.S_IFREG}:
+        Printer(f"Size calculated from nblocks: {pretty_num(inode.block_count*_sb.block_size)}")
+        try:
+            blks = set(inode.each_block(err_ok=True))
+            Printer(f"Found {len(blks)} blocks")
+        except ValueError as e:
+            Printer(e)
     return inode
 
 
@@ -209,7 +216,7 @@ def ls(root_inode=0, *, _sb, depth__d=1, keep_going__k=False, parent__p:int=None
         
 
     def branch(parent_id, inode, depth=0, full_path=''):
-        for blkid in inode.each_block(zero_ok=True):
+        for blkid in inode.each_block(err_ok=True):
             d = DirectoryBlk(_sb, blkid)
             d.validate(all=True)
             Printer(f'#{blkid}', style='dem')
@@ -249,7 +256,7 @@ def ls(root_inode=0, *, _sb, depth__d=1, keep_going__k=False, parent__p:int=None
     
 
 
-def analyze(fname='local/analysis', *, _sb):
+def analyze(fname='local/analysis/', *, _sb):
     ''' Search every block for blocks that look like directory entries
 
     Parameters:
@@ -258,17 +265,17 @@ def analyze(fname='local/analysis', *, _sb):
     '''
     version = 11
     try:
-        with open(fname+'_info.pickle', 'rb') as f:
+        with open(fname+'analysis_info.pickle', 'rb') as f:
             v, bg = pickle.load(f)
             assert(v == version)
     except Exception as e:
         print(e)
         bg = 0
         assert(_sb.blocks_count_lo%8==0)
-        try: os.remove(fname+'_blocks.data')
+        try: os.remove(fname+'analysis_blocks.data')
         except: pass
-    if not os.path.exists(fname+'_blocks.data'):
-        with open(fname+'_blocks.data', 'wb') as f:
+    if not os.path.exists(fname+'analysis_blocks.data'):
+        with open(fname+'analysis_blocks.data', 'wb') as f:
             f.write(bytearray(_sb.blocks_count_lo//8))
     # This is called for every block group
     total_valid = 0
@@ -314,7 +321,7 @@ def analyze(fname='local/analysis', *, _sb):
         return blkids, inodes
     btotal = 0
     itotal = 0
-    with open(fname+'_blocks.data', 'rb+') as valid_stream:
+    with open(fname+'analysis_blocks.data', 'rb+') as valid_stream:
         valid = Bitmap(valid_stream, 0, _sb.blocks_count_lo//8)
         with Printer().progress(f"from {bg}/{_sb.bg_count}", height_max=10) as update:
             while bg < _sb.bg_count:
@@ -324,16 +331,16 @@ def analyze(fname='local/analysis', *, _sb):
                 update.name = f'#{bg}  blkids:{len(resp[0])}/{btotal}  inodes:{len(resp[1])}/{itotal}  valid:{total_valid}'
                 update('bg', tag={'progress':(bg, _sb.bg_count)})
                 bg += 1
-                with open(fname+'_info.pickle', 'wb') as f:
+                with open(fname+'analysis_info.pickle', 'wb') as f:
                     pickle.dump((version, bg), f)
-                with open(fname+f'_bg{bg-1}.pickle', 'wb') as f:
+                with open(fname+f'analysis_bg{bg-1}.pickle', 'wb') as f:
                     pickle.dump(resp, f)
-    with open(fname+'_blocks.data', 'rb') as valid_stream:
+    with open(fname+'analysis_blocks.data', 'rb') as valid_stream:
         blkids = set()
         inodes = set()
         valid = Bitmap(valid_stream, 0, _sb.blocks_count_lo//8)
         for bg in range(_sb.bg_count):
-            with open(fname+f'_bg{bg}.pickle', 'rb') as f:
+            with open(fname+f'analysis_bg{bg}.pickle', 'rb') as f:
                 b,i = pickle.load(f)
                 blkids.update(b)
                 inodes.update(i)
@@ -341,7 +348,42 @@ def analyze(fname='local/analysis', *, _sb):
 
 
 
-def build_file_list(*, _sb, fname='local/file_list.txt', analysis='local/analysis'):
+def grep(pattern, *, _sb, analysis='local/analysis/'):
+    from subprocess import run, DEVNULL
+    os.makedirs('local/grep', exist_ok=True)
+    hval = hashlib.md5(pattern.encode('utf8')).hexdigest()
+    try:
+        with open(f'local/grep/{hval}.pickle', 'rb') as f:
+            found = pickle.load(f)
+    except:
+        found = set()
+        infile = os.environ.get("IMG_FILE")
+        found = set()
+        with open(analysis+'analysis_blocks.data', 'rb') as valid_stream:
+            blkids = set()
+            inodes = set()
+            valid = Bitmap(valid_stream, 0, _sb.blocks_count_lo//8)
+            total = valid.total() - len(valid)
+            with Printer().progress("0", height_max=10) as update:  
+                for i, blkid in enumerate(valid.each_false()):
+                    if i%64 == 0:
+                        update.name = f"{i*100/total:.1f}%"
+                        update(f"{i} {len(found)}", tag={'progress':(i, total)})
+                    #print(blkid)
+                    cmd = f'dd if={infile} skip={blkid} bs={_sb.block_size} count=1 | strings | grep {pattern!r}'
+                    if run(cmd, shell=True, stderr=DEVNULL).returncode: continue
+                    update(f"\b2 {blkid}")
+        with open(f'local/grep/{hval}.pickle', 'wb') as f:
+            pickle.dump(found, f)
+        
+    for blkid in found:
+        Printer.hr(f"{blkid}")
+        cmd = f'dd if={infile} skip={blkid} bs={_sb.block_size} count=1 | strings | grep {pattern!r}'
+        run(cmd, shell=True, stderr=DEVNULL)
+
+
+
+def build_file_list(*, _sb, fname='local/file_list.txt', analysis='local/analysis/'):
     folders = set()
     nfiles = 0
     if os.path.exists(fname):
@@ -350,7 +392,7 @@ def build_file_list(*, _sb, fname='local/file_list.txt', analysis='local/analysi
     with open(fname, 'w') as f:
         with Printer().progress("0", height_max=10) as update: 
             for bg in range(_sb.bg_count):
-                with open(analysis+f'_bg{bg}.pickle', 'rb') as fblk:
+                with open(analysis+f'analysis_bg{bg}.pickle', 'rb') as fblk:
                     blkids,_ = pickle.load(fblk)
                     for blkid in blkids:
                         d = DirectoryBlk(_sb, blkid)
@@ -362,7 +404,7 @@ def build_file_list(*, _sb, fname='local/file_list.txt', analysis='local/analysi
                                 folders.add(e.inode)
                                 continue
                             nfiles += 1
-                            f.write(f'{blkid} {hex(dot[1])} {hex(dot[2])} {e.name_utf8}\n')
+                            f.write(f'{blkid} {hex(e.inode)} {hex(dot[1])} {hex(dot[2])} {e.name_utf8}\n')
                         # Done with this block
                     # Close the block file
                 update.name = f"{bg*100/_sb.bg_count:.1f}%"
@@ -509,10 +551,10 @@ def isearch(inode:int, *, _sb, fdblks='local/pruned.pickle', fmatches=None):
             matches = pickle.load(f)
     except:
         matches = set()
-        with Printer().progress(f"searching for entries pointing to {inode!r}", height_max=10) as print:
+        with Printer().progress(f"searching for entries pointing to {inode!r}", height_max=10) as update:
             for bi, blkid in enumerate(blkids):
                 if bi%4096 == 0:
-                    print(f"{bi}/{len(blkids)} {bi*100/len(blkids):.1f}%  found: {len(matches)} ", tag={'progress':(bi,len(blkids))})
+                    update(f"{bi}/{len(blkids)} {bi*100/len(blkids):.1f}%  found: {len(matches)} ", tag={'progress':(bi,len(blkids))})
                 d = DirectoryBlk(_sb, blkid)
                 for e in d:
                     if e.inode != inode: continue
@@ -607,19 +649,48 @@ def change_dir_entry(blkid:int, name, inode:int, *, _sb):
 
 
 
-def cp(inode, dest, *, _sb):
+def cp(inode, dest, *, _sb, force__f=False):
     ''' Copy a file to some external destination
     '''
+    from subprocess import run, DEVNULL
     inode = _sb.inode(name_or_inode(inode, _sb=_sb))
     Printer(inode)
     if inode.ftype != inode.S_IFREG: raise PrettyException(msg=f"Bad file type {inode.pretty_val('ftype')}")
-    with open(dest, 'wb') as f:
+    infile = os.environ.get("IMG_FILE")
+    try:
+        with open(f'local/copy_{hex(inode.id)}.status', 'r') as f:
+            starti = int(f.read())
+    except:
+        starti = -1
+    fsize = inode.size_lo
+    fsize = _sb.block_size * inode.block_count
+    assert(run(['truncate','-s',str(fsize), dest]).returncode == 0), f'Failed to create file {dest}'
+    with Printer().progress(f"Skipping {starti}" if starti >=0 else f"Copying {inode!r}", height_max=10) as update:
+        total = inode.size_lo
         size = inode.size_lo
-        for blkid in inode:
-            data = read(_sb.stream, blkid*_sb.block_size, min(size, _sb.block_size))
-            print(f"Read {len(data)} from {blkid}")
-            size -= len(data)
-            f.write(data)
+        for i, blkid in enumerate(inode.each_block(err_ok=force__f)):
+            if i <= starti:
+                if i == starti:
+                    update.name = Line(f"Copying {inode!r} from {starti}")
+                    size -= (starti+1)*_sb.block_size
+                continue
+            want = min(size, _sb.block_size)
+            cmd = ['dd',f'bs={_sb.block_size}', f'if={infile}',f'of={dest}',f'count={want}', 'conv=nocreat,notrunc,fdatasync', 'iflag=noatime,count_bytes', 'oflag=noatime', f'seek={i}', f'skip={blkid}']
+            #print(cmd)
+            if blkid: assert(run(cmd, stderr=DEVNULL).returncode == 0), f"FAILED: {cmd}"
+            #data = read(_sb.stream, blkid*_sb.block_size, want)
+            
+            size -= want
+            
+            if i%8 == 0:
+            #    update(pretty_num(size), tag={'progress':(total-size, total)})
+                print(f"copied {i} #{blkid}")
+                
+                with open(f'local/copy_{hex(inode.id)}.status', 'w') as f:
+                    f.write(str(i))
+    
+
+
 
 
 def cat_special(inode):
@@ -678,6 +749,7 @@ async def shell(*, _sb):
     print('Goodbye')
 
 
+
 def test(*,_sb):
     from .prompt import Prompt
     p = Prompt(value='here', choices={'plants', 'pottery', 'pot', 'horse', 'hungry', 'happy', ''}, history=['history3', 'history2', 'history1'])
@@ -696,6 +768,7 @@ def main(*, sb=1024, write__w=False, fname__f=None):
         'pyutil': [('py', 'pyutil', '*/__pycache__/*')],
     })
     if not fname__f: fname__f = os.environ.get('IMG_FILE', '')
+    os.environ['IMG_FILE'] = fname__f
     try:
         with open(fname__f, 'r+b' if write__w else 'rb') as f:
             yield dict(_sb=Superblock(f, sb))

@@ -4,12 +4,16 @@ from .struct import pretty_num
 
 
 class BitmapIter():
-    def __init__(self, bitmap):
+    def __init__(self, bitmap, sel):
         self.bitmap = bitmap
         self.byte = 0
         self.offset = 0
         self.bit = 0
         self.idx = -1
+        self.sel = sel
+
+    def __iter__(self):
+        return self
 
 
     def __next__(self):
@@ -22,7 +26,7 @@ class BitmapIter():
             if self.bit == 8:
                 self.offset += 1
                 self.bit = 0
-            if used: return self.idx
+            if bool(used) == self.sel: return self.idx
         if self.offset == self.bitmap.size: raise StopIteration()
 
 
@@ -57,7 +61,10 @@ class Bitmap():
 
 
     def __iter__(self):
-        return BitmapIter(self)
+        return BitmapIter(self, True)
+
+    def each_false(self):
+        return BitmapIter(self, False)
 
 
     def __len__(self):
@@ -68,7 +75,7 @@ class Bitmap():
         return sum
 
 
-    def num_entries(self):
+    def total(self):
         return self.size * 8
 
 
@@ -101,5 +108,5 @@ class BitmapMem(Bitmap):
 
 
     def __repr__(self):
-        return f"{len(self)} / {self.num_entries()}  " + ''.join('1' if self[i] else '.' for i in range(self.num_entries()))
+        return f"{len(self)} / {self.total()}  " + ''.join('1' if self[i] else '.' for i in range(self.total()))
 

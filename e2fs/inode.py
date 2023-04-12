@@ -1,5 +1,7 @@
 from datetime import datetime
-import struct
+from math import ceil
+from print_ext import Printer
+import struct, sys
 from .struct import Struct, read, pretty_num
 
 enums = {
@@ -100,35 +102,7 @@ dfn = [
 ]
 
 
-
-class BlkIterator():
-    def __init__(self, inode, zero_ok=True):
-        self.sb = inode.sb
-        self.inode = inode
-        self.idx = 0
-        self.maxi = inode.block_count
-        self.id0_max = 12 + self.sb.block_size // 4
-        self.zero_ok = zero_ok
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        while self.idx < self.maxi:
-            idx = self.idx
-            self.idx += 1
-            if idx < 12:
-                blkid = self.inode.block[idx]
-            elif idx < self.id0_max:
-                offset = self.inode.block[12] * self.sb.block_size + 4*(idx-12)
-                blkid = struct.unpack_from('<I', read(self.inode.stream, offset, 4))[0]
-            else:
-                raise ValueError(f"Not implemented past {self.maxi}")
-            if not self.sb.valid_blkid(blkid, self.zero_ok): raise ValueError(f"Invalid blkid {blkid}")
-            if blkid: return blkid
-        if self.idx == self.maxi: raise StopIteration()
-
-
+  
 
 class INode(Struct):
     size = 0
@@ -185,18 +159,70 @@ class INode(Struct):
         return self._timestamp(k) if self[k] else 'Never'
 
 
-    def __iter__(self):
-        return BlkIterator(self)
+    def pretty_size_lo(self, k):
+        return pretty_num(self[k])
 
 
-    def each_block(self, **kwargs):
-        return BlkIterator(self, **kwargs)
+    def each_block(self, err_ok=False, by_size=True):
+        block_size = self.sb.block_size
+        per_blk = block_size // 4      
+        end = self.block_count
+        end_by_size = ceil(self.size_lo / block_size)
+        if end != end_by_size:
+            msg = f"Block count mismatch {end} vs. {end_by_size}    || {self.blocks_lo} // {2<<self.sb.log_block_size}"
+            #if not err_ok: raise ValueError(msg)
+            sys.stderr.write(msg+'\n')
+            #end = end_by_size if by_size else end
+        idx = 0
+        # Block check
+        def _blkid(blkid, parent=None, inc=1):
+            nonlocal idx
+            if idx == end: return -1
+            idx += inc
+            if blkid >= self.sb.blocks_count_lo: # blkid == 0 or
+                msg = f"Invalid blkid {blkid}" + (" in inode blocks" if parent == None else f" in blk {parent}")
+                if not err_ok: raise ValueError(msg)
+                sys.stderr.write(msg+'\n')
+                blkid = 0
+            return blkid
+        # First indiraction
+        def _i0(blkid):
+            offset = blkid*block_size
+            for i in range(per_blk):
+                yield _blkid(struct.unpack_from('<I', read(self.sb.stream, offset + 4*i, 4))[0], parent=blkid)
+        # Second indirection
+        def _i1(blkid):
+            offset = blkid*block_size
+            for i in range(per_blk):
+                if (sb:=_blkid(struct.unpack_from('<I', read(self.sb.stream, offset + 4*i, 4))[0], inc=0, parent=blkid)) < 0: return -1
+                if sb: yield from _i0(sb)
+        # Third indirection
+        def _i2(blkid):
+            offset = blkid*block_size
+            for i in range(per_blk):
+                if (sb:=_blkid(struct.unpack_from('<I', read(self.sb.stream, offset + 4*i, 4))[0], inc=0, parent=blkid)) < 0: return -1
+                if sb: yield from _i1(sb)
+        # Go
+        for i in range(12):
+            if (blkid:=_blkid(self.block[i])) < 0: return
+            if blkid > 0: yield blkid
+        b12 = self.block[12]
+        for blkid in _i0(b12):
+            if blkid < 0: return
+            if blkid: yield blkid
+        for blkid in _i1(self.block[13]):
+            if blkid < 0: return
+            if blkid: yield blkid
+        for blkid in _i2(self.block[14]):
+            if blkid < 0: return
+            if blkid: yield blkid
 
 
-    def each_line(self, line_size, nl=True, size=-1):
+
+    def each_line(self, line_size, nl=True, size=-1, **kwargs):
         if size < 0: size = self.size_lo
         data = bytearray()
-        blkids = iter(self)
+        blkids = iter(self.each_block(**kwargs))
         while True:
             idx = -1
             try:
