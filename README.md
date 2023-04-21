@@ -4,6 +4,42 @@ https://ext4.wiki.kernel.org/index.php/Ext4_Disk_Layout#The_Super_Block
 https://www.nongnu.org/ext2-doc/ext2.html#bg-block-bitmap
 
 
+## TLDR;
+
+The original /dev/sdd2 LVM-v0 filesystem got corrupted.
+That partition was copied to the raid `/mnt/md1/sdd2_lvm.img`.
+From there the broken ext3 filesystem was extracted from the lvm volume and copied to `/mnt/md1/sdd2.img.orig`.
+That image was tweaked to gain access to the kvm images.
+`e2fsck` was then run to make it mountable.
+
+This fixed image can be mounted to gain access to the kvm images
+
+ $ mount /mnt/md1/sdd2.img.orig /mnt/broken_sdd2 -o loop
+ $ cd "/mnt/broken_sdd2/var/#64454657/gconf/gconf.xml.defaults/%gconf-tree-zh_HK.xml/libvirt/images"
+
+The images are:
+ * `Huskie.img` : Primary web server files
+ * `Pug.img` : beer
+ * `Bulldog.img` : unkown
+ * `Aibo.img` : swap space
+ * `Beagle.img` : swap space
+
+The Pug.img contains two partitions.  The second partition can accessed via a loopback device.
+
+ $ losetup --offset $((512*1026048)) --sizelimit $((512*80893952)) --show --find Pug.img
+ /dev/loopXX
+ 
+Next, the logical volume on `/dev/loopXX` can be activated, and the `centos/root` volume mounted.
+
+ $ vgdisplay
+ $ vgchange -ay centos
+ $ mount /dev/centos/root /mnt/centos
+
+Look for mongo info.
+
+ $ cat /mnt/centos/etc/mongod.conf
+ $ ls /mnt/centos/var/lib/mongo
+
 
 ## List of interesting objects
 
@@ -155,6 +191,7 @@ local/images/Huskie.img2      208845 102398309 102189465 48.7G 8e Linux LVM
 This is where the DB is
 
 15028248 0x1a28001 0xe5000a 0x1b0126 Bulldog.img
+0x21/#64454657/gconf/gconf.xml.defaults/%gconf-tree-zh_HK.xml/libvirt/images
 
 local/images/Bulldog.img1 *        63    208844    208782  102M 83 Linux
 local/images/Bulldog.img2      208845 102398309 102189465 48.7G 8e Linux LVM
