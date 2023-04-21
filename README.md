@@ -14,8 +14,10 @@ That image was tweaked to gain access to the kvm images.
 
 This fixed image can be mounted to gain access to the kvm images
 
+```
  $ mount /mnt/md1/sdd2.img.orig /mnt/broken_sdd2 -o loop
  $ cd "/mnt/broken_sdd2/var/#64454657/gconf/gconf.xml.defaults/%gconf-tree-zh_HK.xml/libvirt/images"
+```
 
 The images are:
  * `Huskie.img` : Primary web server files
@@ -26,20 +28,25 @@ The images are:
 
 The Pug.img contains two partitions.  The second partition can accessed via a loopback device.
 
+```
  $ losetup --offset $((512*1026048)) --sizelimit $((512*80893952)) --show --find Pug.img
  /dev/loopXX
- 
+```
+
 Next, the logical volume on `/dev/loopXX` can be activated, and the `centos/root` volume mounted.
 
+```
  $ vgdisplay
  $ vgchange -ay centos
  $ mount /dev/centos/root /mnt/centos
+```
 
 Look for mongo info.
 
+```
  $ cat /mnt/centos/etc/mongod.conf
  $ ls /mnt/centos/var/lib/mongo
-
+```
 
 ## List of interesting objects
 
